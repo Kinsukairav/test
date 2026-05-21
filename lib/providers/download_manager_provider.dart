@@ -6,7 +6,8 @@ import '../models/search_result.dart';
 import '../services/youtube_service.dart';
 
 // Provider for download manager
-final downloadManagerProvider = StateNotifierProvider<DownloadManager, DownloadManagerState>(
+final downloadManagerProvider =
+    StateNotifierProvider<DownloadManager, DownloadManagerState>(
   (ref) => DownloadManager(),
 );
 
@@ -33,27 +34,29 @@ class DownloadManagerState {
     );
   }
 
-  List<DownloadTask> get completedDownloads => 
-      downloads.where((task) => task.status == DownloadStatus.completed).toList();
+  List<DownloadTask> get completedDownloads => downloads
+      .where((task) => task.status == DownloadStatus.completed)
+      .toList();
 
-  List<DownloadTask> get pendingDownloads => 
+  List<DownloadTask> get pendingDownloads =>
       downloads.where((task) => task.status == DownloadStatus.pending).toList();
 
-  List<DownloadTask> get activeDownloadTasks => 
-      downloads.where((task) => task.status == DownloadStatus.downloading).toList();
+  List<DownloadTask> get activeDownloadTasks => downloads
+      .where((task) => task.status == DownloadStatus.downloading)
+      .toList();
 
-  List<DownloadTask> get failedDownloads => 
+  List<DownloadTask> get failedDownloads =>
       downloads.where((task) => task.status == DownloadStatus.failed).toList();
 }
 
 class DownloadManager extends StateNotifier<DownloadManagerState> {
   DownloadManager() : super(const DownloadManagerState());
-  
+
   final YouTubeService _youtubeService = YouTubeService();
   final Queue<DownloadTask> _downloadQueue = Queue<DownloadTask>();
   final int _maxConcurrentDownloads = 3;
   Timer? _progressTimer;
-  
+
   // Add a download to the queue
   Future<void> addDownload(SearchResult searchResult) async {
     final downloadTask = DownloadTask(
@@ -68,14 +71,15 @@ class DownloadManager extends StateNotifier<DownloadManagerState> {
 
     final updatedDownloads = [...state.downloads, downloadTask];
     state = state.copyWith(downloads: updatedDownloads);
-    
+
     _downloadQueue.add(downloadTask);
     _processDownloadQueue();
   }
 
   // Process the download queue
   Future<void> _processDownloadQueue() async {
-    if (state.activeDownloadCount >= _maxConcurrentDownloads || _downloadQueue.isEmpty) {
+    if (state.activeDownloadCount >= _maxConcurrentDownloads ||
+        _downloadQueue.isEmpty) {
       return;
     }
 
@@ -87,14 +91,16 @@ class DownloadManager extends StateNotifier<DownloadManagerState> {
   Future<void> _startDownload(DownloadTask task) async {
     try {
       // Update task status to downloading
-      _updateDownloadTask(task.id, task.copyWith(
-        status: DownloadStatus.downloading,
-        progress: 0.0,
-      ));
+      _updateDownloadTask(
+          task.id,
+          task.copyWith(
+            status: DownloadStatus.downloading,
+            progress: 0.0,
+          ));
 
       // Get download path
       final downloadPath = await _youtubeService.getDefaultDownloadPath();
-      
+
       // Start the download
       final completedTask = await _youtubeService.downloadAudio(
         task.id,
@@ -106,16 +112,18 @@ class DownloadManager extends StateNotifier<DownloadManagerState> {
 
       // Update the task with completion status
       _updateDownloadTask(task.id, completedTask);
-      
+
       // Process next download in queue
       _processDownloadQueue();
     } catch (e) {
       print('Download failed for ${task.title}: $e');
-      _updateDownloadTask(task.id, task.copyWith(
-        status: DownloadStatus.failed,
-        progress: 0.0,
-      ));
-      
+      _updateDownloadTask(
+          task.id,
+          task.copyWith(
+            status: DownloadStatus.failed,
+            progress: 0.0,
+          ));
+
       // Process next download in queue even if this one failed
       _processDownloadQueue();
     }
@@ -142,11 +150,13 @@ class DownloadManager extends StateNotifier<DownloadManagerState> {
   Future<void> retryDownload(String taskId) async {
     final task = state.downloads.firstWhere((task) => task.id == taskId);
     if (task.status == DownloadStatus.failed) {
-      _updateDownloadTask(taskId, task.copyWith(
-        status: DownloadStatus.pending,
-        progress: 0.0,
-      ));
-      
+      _updateDownloadTask(
+          taskId,
+          task.copyWith(
+            status: DownloadStatus.pending,
+            progress: 0.0,
+          ));
+
       _downloadQueue.add(task);
       _processDownloadQueue();
     }
@@ -155,12 +165,15 @@ class DownloadManager extends StateNotifier<DownloadManagerState> {
   // Cancel a download
   void cancelDownload(String taskId) {
     final task = state.downloads.firstWhere((task) => task.id == taskId);
-    if (task.status == DownloadStatus.downloading || task.status == DownloadStatus.pending) {
-      _updateDownloadTask(taskId, task.copyWith(
-        status: DownloadStatus.cancelled,
-        progress: 0.0,
-      ));
-      
+    if (task.status == DownloadStatus.downloading ||
+        task.status == DownloadStatus.pending) {
+      _updateDownloadTask(
+          taskId,
+          task.copyWith(
+            status: DownloadStatus.cancelled,
+            progress: 0.0,
+          ));
+
       // Remove from queue if pending
       _downloadQueue.removeWhere((queueTask) => queueTask.id == taskId);
     }
@@ -168,7 +181,8 @@ class DownloadManager extends StateNotifier<DownloadManagerState> {
 
   // Remove a download from history
   void removeDownload(String taskId) {
-    final updatedDownloads = state.downloads.where((task) => task.id != taskId).toList();
+    final updatedDownloads =
+        state.downloads.where((task) => task.id != taskId).toList();
     state = state.copyWith(downloads: updatedDownloads);
   }
 
@@ -199,10 +213,10 @@ class DownloadManager extends StateNotifier<DownloadManagerState> {
 
   // Check if a video is already downloaded or downloading
   bool isVideoDownloaded(String videoId) {
-    return state.downloads.any((task) => 
-        task.id == videoId && 
-        (task.status == DownloadStatus.completed || task.status == DownloadStatus.downloading)
-    );
+    return state.downloads.any((task) =>
+        task.id == videoId &&
+        (task.status == DownloadStatus.completed ||
+            task.status == DownloadStatus.downloading));
   }
 
   // Pause all downloads

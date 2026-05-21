@@ -1,5 +1,4 @@
 class Track {
-
   Track({
     required this.id,
     required this.title,

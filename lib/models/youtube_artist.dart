@@ -29,7 +29,10 @@ class YouTubeArtist {
   factory YouTubeArtist.fromJson(Map<String, dynamic> json) {
     return YouTubeArtist(
       id: json['channelId'] ?? json['id'] ?? '',
-      name: json['name'] ?? json['author'] ?? json['uploader'] ?? 'Unknown Artist',
+      name: json['name'] ??
+          json['author'] ??
+          json['uploader'] ??
+          'Unknown Artist',
       description: json['description'] ?? '',
       avatarUrl: _extractAvatar(json['avatar'] ?? json['thumbnails']),
       bannerUrl: _extractBanner(json['banner'] ?? json['bannerUrl']),
@@ -66,7 +69,7 @@ class YouTubeArtist {
 
   static DateTime _parseDate(dynamic date) {
     if (date == null) return DateTime.now().subtract(Duration(days: 365));
-    
+
     try {
       if (date is String) {
         return DateTime.parse(date);

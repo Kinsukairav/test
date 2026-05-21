@@ -1,7 +1,6 @@
 import 'track.dart';
 
 class Playlist {
-
   Playlist({
     required this.id,
     required this.name,
@@ -18,7 +17,8 @@ class Playlist {
         map['tracks']?.map((track) => Track.fromMap(track)) ?? [],
       ),
       createdDate: DateTime.fromMillisecondsSinceEpoch(map['createdDate'] ?? 0),
-      lastModified: DateTime.fromMillisecondsSinceEpoch(map['lastModified'] ?? 0),
+      lastModified:
+          DateTime.fromMillisecondsSinceEpoch(map['lastModified'] ?? 0),
     );
   }
   final String id;
@@ -55,7 +55,6 @@ class Playlist {
 }
 
 class DownloadTask {
-
   DownloadTask({
     required this.id,
     required this.url,
@@ -110,8 +109,4 @@ enum DownloadStatus {
   cancelled,
 }
 
-enum RepeatMode {
-  off,
-  all,
-  one,
-}
+// RepeatMode is defined in audio_player_provider.dart

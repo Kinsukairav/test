@@ -6,7 +6,7 @@ import '../models/playlist.dart';
 import '../services/youtube_service.dart';
 import '../providers/download_manager_provider.dart';
 import '../providers/audio_player_provider.dart';
-import 'download_manager_screen.dart';
+import '../providers/navigation_provider.dart';
 
 class SearchScreen extends ConsumerStatefulWidget {
   const SearchScreen({super.key});
@@ -31,7 +31,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: _handleBack,
         ),
       ),
       body: Column(
@@ -43,7 +43,10 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
               color: Theme.of(context).colorScheme.surface,
               border: Border(
                 bottom: BorderSide(
-                  color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
+                  color: Theme.of(context)
+                      .colorScheme
+                      .outline
+                      .withValues(alpha: 0.2),
                   width: 1,
                 ),
               ),
@@ -72,7 +75,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                         borderSide: BorderSide.none,
                       ),
                       filled: true,
-                      fillColor: Theme.of(context).colorScheme.background,
+                      fillColor: Theme.of(context).colorScheme.surface,
                       contentPadding: const EdgeInsets.symmetric(
                         horizontal: 16,
                         vertical: 12,
@@ -90,9 +93,10 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                 ),
                 const SizedBox(width: 12),
                 ElevatedButton.icon(
-                  onPressed: _searchController.text.trim().isNotEmpty && !_isLoading
-                      ? () => _performSearch(_searchController.text.trim())
-                      : null,
+                  onPressed:
+                      _searchController.text.trim().isNotEmpty && !_isLoading
+                          ? () => _performSearch(_searchController.text.trim())
+                          : null,
                   icon: _isLoading
                       ? const SizedBox(
                           width: 16,
@@ -111,7 +115,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                 const SizedBox(width: 8),
                 // Link Paste Button
                 ElevatedButton.icon(
-                  onPressed: _isImportingPlaylist ? null : _showPlaylistLinkDialog,
+                  onPressed:
+                      _isImportingPlaylist ? null : _showPlaylistLinkDialog,
                   icon: _isImportingPlaylist
                       ? const SizedBox(
                           width: 16,
@@ -119,10 +124,13 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.link),
-                  label: Text(_isImportingPlaylist ? 'Loading...' : 'Paste Link'),
+                  label:
+                      Text(_isImportingPlaylist ? 'Loading...' : 'Paste Link'),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Theme.of(context).colorScheme.secondaryContainer,
-                    foregroundColor: Theme.of(context).colorScheme.onSecondaryContainer,
+                    backgroundColor:
+                        Theme.of(context).colorScheme.secondaryContainer,
+                    foregroundColor:
+                        Theme.of(context).colorScheme.onSecondaryContainer,
                     padding: const EdgeInsets.symmetric(
                       horizontal: 16,
                       vertical: 12,
@@ -185,21 +193,25 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
             Icon(
               Icons.music_note,
               size: 64,
-              color: Theme.of(context).colorScheme.primary.withOpacity(0.5),
+              color:
+                  Theme.of(context).colorScheme.primary.withValues(alpha: 0.5),
             ),
             const SizedBox(height: 16),
             Text(
               'Search for Music',
               style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.w500,
-              ),
+                    fontWeight: FontWeight.w500,
+                  ),
             ),
             const SizedBox(height: 8),
             Text(
               'Find your favorite songs, artists, and albums',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
-              ),
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withValues(alpha: 0.7),
+                  ),
             ),
           ],
         ),
@@ -222,7 +234,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
 
   Future<void> _performSearch(String query) async {
     if (query.trim().isEmpty) return;
-    
+
     setState(() {
       _isLoading = true;
       _searchResults.clear();
@@ -230,16 +242,16 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
 
     try {
       print('Searching for: $query');
-      
+
       // Use the real YouTube service
       final results = await _youtubeService.searchVideos(query, maxResults: 15);
-      
+
       if (mounted) {
         setState(() {
           _searchResults = results;
           _isLoading = false;
         });
-        
+
         // Show success message if results found
         if (results.isNotEmpty) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -253,17 +265,17 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       }
     } catch (e) {
       print('Search error: $e');
-      
+
       if (mounted) {
         setState(() {
           _isLoading = false;
         });
-        
+
         // Show detailed error message
         final errorMessage = e.toString().contains('Exception: ')
             ? e.toString().replaceFirst('Exception: ', '')
             : 'Search failed: ${e.toString()}';
-            
+
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Column(
@@ -299,7 +311,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   void _playTrack(SearchResult result) async {
     try {
       final audioController = ref.read(audioPlayerControllerProvider.notifier);
-      
+
       // Show loading notification
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -316,23 +328,23 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           ),
         ),
       );
-      
+
       // Start streaming the track
       await audioController.playFromSearchResult(result);
-      
+
       // Show success message
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Now playing: ${result.title} by ${result.artist}'),
             action: SnackBarAction(
-              label: 'Go to Player',
-              onPressed: () => Navigator.of(context).pop(),
+              label: 'OK',
+              onPressed: () =>
+                  ScaffoldMessenger.of(context).hideCurrentSnackBar(),
             ),
           ),
         );
       }
-      
     } catch (e) {
       // Show error message
       if (mounted) {
@@ -352,7 +364,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
 
   void _downloadTrack(SearchResult result) {
     final downloadManager = ref.read(downloadManagerProvider.notifier);
-    
+
     // Check if already downloaded or downloading
     if (downloadManager.isVideoDownloaded(result.videoId)) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -362,21 +374,17 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       );
       return;
     }
-    
+
     // Add to download queue
     downloadManager.addDownload(result);
-    
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('Added "${result.title}" to download queue'),
         action: SnackBarAction(
           label: 'View Downloads',
           onPressed: () {
-            Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (context) => const DownloadManagerScreen(),
-              ),
-            );
+            ref.read(activeScreenProvider.notifier).state = 3;
           },
         ),
       ),
@@ -385,14 +393,14 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
 
   Future<void> _showPlaylistLinkDialog() async {
     final TextEditingController linkController = TextEditingController();
-    
+
     // Try to get text from clipboard
     try {
       final clipboardData = await Clipboard.getData(Clipboard.kTextPlain);
-      if (clipboardData?.text != null && 
-          (clipboardData!.text!.contains('youtube.com/playlist') || 
-           clipboardData.text!.contains('youtu.be/playlist') ||
-           clipboardData.text!.startsWith('PL'))) {
+      if (clipboardData?.text != null &&
+          (clipboardData!.text!.contains('youtube.com/playlist') ||
+              clipboardData.text!.contains('youtu.be/playlist') ||
+              clipboardData.text!.startsWith('PL'))) {
         linkController.text = clipboardData.text!;
       }
     } catch (e) {
@@ -434,7 +442,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surfaceVariant,
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: const Column(
@@ -442,7 +450,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   children: [
                     Text(
                       'Supported formats:',
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                      style:
+                          TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
                     ),
                     SizedBox(height: 4),
                     Text(
@@ -518,7 +527,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
 
       // Get playlist contents
       final tracks = await _youtubeService.getPlaylistContents(playlistId);
-      
+
       // Close loading dialog
       if (mounted) {
         Navigator.of(context).pop();
@@ -531,7 +540,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       // Show playlist contents in a bottom sheet
       if (mounted) {
         _showPlaylistContents(tracks, playlistId);
-        
+
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Found ${tracks.length} tracks in playlist!'),
@@ -541,12 +550,12 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       }
     } catch (e) {
       print('Error importing playlist: $e');
-      
+
       // Close loading dialog if still open
       if (mounted && Navigator.of(context).canPop()) {
         Navigator.of(context).pop();
       }
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -592,7 +601,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                   ),
                 ),
                 const SizedBox(height: 16),
-                
+
                 // Playlist header
                 Row(
                   children: [
@@ -608,15 +617,24 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                         children: [
                           Text(
                             'YouTube Playlist',
-                            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleLarge
+                                ?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
                           ),
                           Text(
                             '${tracks.length} tracks • ID: $playlistId',
-                            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
-                            ),
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodyMedium
+                                ?.copyWith(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurface
+                                      .withValues(alpha: 0.7),
+                                ),
                           ),
                         ],
                       ),
@@ -646,10 +664,10 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                     ),
                   ],
                 ),
-                
+
                 const SizedBox(height: 16),
                 const Divider(),
-                
+
                 // Track list
                 Expanded(
                   child: ListView.builder(
@@ -675,26 +693,25 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
 
   Future<void> _playAllTracks(List<SearchResult> tracks) async {
     if (tracks.isEmpty) return;
-    
+
     try {
       final audioController = ref.read(audioPlayerControllerProvider.notifier);
-      
+
       // Convert SearchResult to Track
       final trackList = tracks.map((result) => result.toTrack()).toList();
-      
+
       // Play playlist (sets queue and starts playing)
       await audioController.playPlaylist(trackList);
-      
+
       if (mounted) {
         Navigator.of(context).pop(); // Close the bottom sheet
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Playing ${tracks.length} tracks from playlist'),
             action: SnackBarAction(
-              label: 'Go to Player',
-              onPressed: () {
-                DefaultTabController.of(context).animateTo(0);
-              },
+              label: 'OK',
+              onPressed: () =>
+                  ScaffoldMessenger.of(context).hideCurrentSnackBar(),
             ),
           ),
         );
@@ -711,17 +728,18 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     }
   }
 
-  Future<void> _savePlaylist(List<SearchResult> tracks, String playlistId) async {
+  Future<void> _savePlaylist(
+      List<SearchResult> tracks, String playlistId) async {
     if (tracks.isEmpty) return;
-    
+
     try {
       // Show name input dialog
       final playlistName = await _showPlaylistNameDialog(playlistId);
       if (playlistName == null || playlistName.trim().isEmpty) return;
-      
+
       // Convert SearchResult to Track
       final trackList = tracks.map((result) => result.toTrack()).toList();
-      
+
       // Create playlist
       final playlist = Playlist(
         id: playlistId,
@@ -730,19 +748,20 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         createdDate: DateTime.now(),
         lastModified: DateTime.now(),
       );
-      
+
       // Save to provider
       ref.read(savedPlaylistsProvider.notifier).addPlaylist(playlist);
-      
+
       if (mounted) {
         Navigator.of(context).pop(); // Close the bottom sheet
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Playlist "$playlistName" saved with ${tracks.length} tracks'),
+            content: Text(
+                'Playlist "$playlistName" saved with ${tracks.length} tracks'),
             action: SnackBarAction(
               label: 'View Playlists',
               onPressed: () {
-                // TODO: Navigate to playlists view
+                ref.read(activeScreenProvider.notifier).state = 0;
               },
             ),
           ),
@@ -761,8 +780,9 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   }
 
   Future<String?> _showPlaylistNameDialog(String defaultId) async {
-    final controller = TextEditingController(text: 'YouTube Playlist $defaultId');
-    
+    final controller =
+        TextEditingController(text: 'YouTube Playlist $defaultId');
+
     return showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
@@ -802,6 +822,16 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     _searchController.dispose();
     super.dispose();
   }
+
+  void _handleBack() {
+    final navigator = Navigator.of(context);
+    if (navigator.canPop()) {
+      navigator.pop();
+      return;
+    }
+
+    ref.read(activeScreenProvider.notifier).state = 0;
+  }
 }
 
 class SearchResultTile extends StatelessWidget {
@@ -826,13 +856,25 @@ class SearchResultTile extends StatelessWidget {
           width: 56,
           height: 56,
           decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
+            color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(8),
           ),
-          child: Icon(
-            Icons.music_note,
-            color: Theme.of(context).colorScheme.primary,
-          ),
+          child: result.thumbnailUrl.isNotEmpty
+              ? ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.network(
+                    result.thumbnailUrl,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Icon(
+                      Icons.music_note,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
+                )
+              : Icon(
+                  Icons.music_note,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
         ),
         title: Text(
           result.title,
@@ -846,7 +888,10 @@ class SearchResultTile extends StatelessWidget {
             Text(
               result.artist,
               style: TextStyle(
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                color: Theme.of(context)
+                    .colorScheme
+                    .onSurface
+                    .withValues(alpha: 0.7),
               ),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -857,7 +902,10 @@ class SearchResultTile extends StatelessWidget {
                 Text(
                   '${result.duration.inMinutes}:${(result.duration.inSeconds % 60).toString().padLeft(2, '0')}',
                   style: TextStyle(
-                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withValues(alpha: 0.5),
                     fontSize: 12,
                   ),
                 ),
@@ -865,7 +913,10 @@ class SearchResultTile extends StatelessWidget {
                 Text(
                   '•',
                   style: TextStyle(
-                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withValues(alpha: 0.5),
                     fontSize: 12,
                   ),
                 ),
@@ -873,7 +924,10 @@ class SearchResultTile extends StatelessWidget {
                 Text(
                   result.formattedViewCount,
                   style: TextStyle(
-                    color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withValues(alpha: 0.5),
                     fontSize: 12,
                   ),
                 ),

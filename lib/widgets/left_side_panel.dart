@@ -1,206 +1,391 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide RepeatMode;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../screens/search_screen.dart';
-import '../screens/queue_screen.dart';
 import '../providers/audio_player_provider.dart';
 import '../models/playlist.dart';
 
 class LeftSidePanel extends ConsumerWidget {
-  const LeftSidePanel({
-    super.key,
-    required this.isExpanded,
-    required this.onToggleExpanded,
-  });
-  
-  final bool isExpanded;
-  final VoidCallback onToggleExpanded;
+  const LeftSidePanel({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final playerState = ref.watch(audioPlayerControllerProvider);
+    final currentTrack = playerState.currentTrack;
+    final savedPlaylists = ref.watch(savedPlaylistsProvider);
+
     return Container(
+      width: 320,
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.3),
+        color: Theme.of(context)
+            .colorScheme
+            .surfaceContainerHighest
+            .withValues(alpha: 0.3),
         border: Border(
           right: BorderSide(
-            color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
+            color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.2),
             width: 1,
           ),
         ),
       ),
       child: Column(
         children: [
-          // Toggle Button
-          Container(
-            height: 60,
-            padding: const EdgeInsets.all(8),
-            child: Row(
-              children: [
-                IconButton(
-                  onPressed: onToggleExpanded,
-                  icon: Icon(
-                    isExpanded ? Icons.menu_open : Icons.menu,
-                    color: Theme.of(context).colorScheme.onSurface,
-                  ),
-                ),
-                if (isExpanded) ...[
-                  const SizedBox(width: 8),
-                  Text(
-                    'Library',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
+          // Music Player Card — uses flexible height to avoid overflow
+          Expanded(
+            flex: 3,
+            child: Container(
+              margin: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surface,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.2),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
                   ),
                 ],
-              ],
-            ),
-          ),
-          
-          // Navigation Items
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              children: [
-                _buildNavItem(
-                  context,
-                  icon: Icons.home,
-                  label: 'Home',
-                  isSelected: true,
-                ),
-                _buildNavItem(
-                  context,
-                  icon: Icons.search,
-                  label: 'Search',
-                  onTap: () => _navigateToSearch(context),
-                ),
-                _buildNavItem(
-                  context,
-                  icon: Icons.library_music,
-                  label: 'Library',
-                ),
-                _buildNavItem(
-                  context,
-                  icon: Icons.favorite,
-                  label: 'Favorites',
-                ),
-                _buildNavItem(
-                  context,
-                  icon: Icons.playlist_play,
-                  label: 'Playlists',
-                ),
-                _buildNavItem(
-                  context,
-                  icon: Icons.history,
-                  label: 'Recently Played',
-                ),
-                _buildNavItem(
-                  context,
-                  icon: Icons.queue_music,
-                  label: 'Queue',
-                  onTap: () => _navigateToQueue(context),
-                ),
-                _buildNavItem(
-                  context,
-                  icon: Icons.download,
-                  label: 'Downloads',
-                ),
-                
-                const Divider(),
-                
-                // Saved Playlists Section
-                if (isExpanded) ...[
+              ),
+              child: Column(
+                children: [
+                  // Cover Art
+                  Expanded(
+                    child: Container(
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        borderRadius: const BorderRadius.vertical(
+                            top: Radius.circular(16)),
+                        color: Theme.of(context).colorScheme.primaryContainer,
+                      ),
+                      child: currentTrack?.albumArt != null
+                          ? ClipRRect(
+                              borderRadius: const BorderRadius.vertical(
+                                  top: Radius.circular(16)),
+                              child: Image.network(
+                                currentTrack!.albumArt!,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) => Center(
+                                  child: Icon(
+                                    Icons.music_note_rounded,
+                                    size: 64,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onPrimaryContainer
+                                        .withValues(alpha: 0.5),
+                                  ),
+                                ),
+                              ),
+                            )
+                          : Center(
+                              child: Icon(
+                                Icons.music_note_rounded,
+                                size: 64,
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onPrimaryContainer
+                                    .withValues(alpha: 0.5),
+                              ),
+                            ),
+                    ),
+                  ),
+                  // Track Info & Controls
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    child: Row(
+                    padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
-                          'Saved Playlists',
-                          style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
-                            fontWeight: FontWeight.bold,
+                          currentTrack?.title ?? 'No Track Playing',
+                          style: const TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 16),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          currentTrack?.artist ?? 'Unknown Artist',
+                          style: TextStyle(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurface
+                                .withValues(alpha: 0.6),
+                            fontSize: 13,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 8),
+                        // Progress Bar
+                        SliderTheme(
+                          data: SliderTheme.of(context).copyWith(
+                            trackHeight: 3,
+                            thumbShape: const RoundSliderThumbShape(
+                                enabledThumbRadius: 5),
+                            overlayShape: const RoundSliderOverlayShape(
+                                overlayRadius: 12),
+                          ),
+                          child: Builder(
+                            builder: (context) {
+                              final double maxVal = playerState
+                                          .totalDuration.inSeconds
+                                          .toDouble() >
+                                      0
+                                  ? playerState.totalDuration.inSeconds
+                                      .toDouble()
+                                  : 1;
+                              final double val = playerState
+                                  .currentPosition.inSeconds
+                                  .toDouble()
+                                  .clamp(0, maxVal);
+
+                              return Slider(
+                                value: val,
+                                max: maxVal,
+                                onChanged: (value) {
+                                  ref
+                                      .read(audioPlayerControllerProvider
+                                          .notifier)
+                                      .seek(Duration(seconds: value.toInt()));
+                                },
+                              );
+                            },
                           ),
                         ),
-                        const Spacer(),
-                        IconButton(
-                          onPressed: () => _showCreatePlaylistDialog(context),
-                          icon: Icon(
-                            Icons.add,
-                            size: 20,
-                            color: Theme.of(context).colorScheme.primary,
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                _formatDuration(playerState.currentPosition),
+                                style: TextStyle(
+                                    fontSize: 11,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant),
+                              ),
+                              Text(
+                                _formatDuration(playerState.totalDuration),
+                                style: TextStyle(
+                                    fontSize: 11,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant),
+                              ),
+                            ],
                           ),
-                          tooltip: 'Create Playlist',
+                        ),
+                        const SizedBox(height: 4),
+                        // Controls
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: [
+                            IconButton(
+                              icon: Icon(
+                                Icons.shuffle_rounded,
+                                size: 20,
+                                color: ref.watch(isShuffleProvider)
+                                    ? Theme.of(context).colorScheme.primary
+                                    : null,
+                              ),
+                              onPressed: () => ref
+                                  .read(audioPlayerControllerProvider.notifier)
+                                  .toggleShuffle(),
+                              tooltip: 'Shuffle',
+                              visualDensity: VisualDensity.compact,
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.skip_previous_rounded,
+                                  size: 22),
+                              onPressed: () => ref
+                                  .read(audioPlayerControllerProvider.notifier)
+                                  .playPrevious(),
+                              tooltip: 'Previous',
+                              visualDensity: VisualDensity.compact,
+                            ),
+                            Container(
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                              child: IconButton(
+                                icon: Icon(
+                                  playerState.isPlaying
+                                      ? Icons.pause_rounded
+                                      : Icons.play_arrow_rounded,
+                                  color:
+                                      Theme.of(context).colorScheme.onPrimary,
+                                ),
+                                onPressed: () {
+                                  if (playerState.isPlaying) {
+                                    ref
+                                        .read(audioPlayerControllerProvider
+                                            .notifier)
+                                        .pause();
+                                  } else {
+                                    ref
+                                        .read(audioPlayerControllerProvider
+                                            .notifier)
+                                        .play();
+                                  }
+                                },
+                                tooltip:
+                                    playerState.isPlaying ? 'Pause' : 'Play',
+                              ),
+                            ),
+                            IconButton(
+                              icon:
+                                  const Icon(Icons.skip_next_rounded, size: 22),
+                              onPressed: () => ref
+                                  .read(audioPlayerControllerProvider.notifier)
+                                  .playNext(),
+                              tooltip: 'Next',
+                              visualDensity: VisualDensity.compact,
+                            ),
+                            IconButton(
+                              icon: Icon(
+                                _repeatIcon(ref.watch(repeatModeProvider)),
+                                size: 20,
+                                color: ref.watch(repeatModeProvider) !=
+                                        RepeatMode.off
+                                    ? Theme.of(context).colorScheme.primary
+                                    : null,
+                              ),
+                              onPressed: () => ref
+                                  .read(audioPlayerControllerProvider.notifier)
+                                  .toggleRepeat(),
+                              tooltip: 'Repeat',
+                              visualDensity: VisualDensity.compact,
+                            ),
+                          ],
                         ),
                       ],
                     ),
                   ),
-                  _buildSavedPlaylists(context, ref),
-                ] else ...[
-                  // Create Playlist (compact)
-                  _buildNavItem(
-                    context,
-                    icon: Icons.add,
-                    label: 'Create Playlist',
-                    onTap: () => _showCreatePlaylistDialog(context),
-                  ),
                 ],
+              ),
+            ),
+          ),
+
+          // Playlists Header
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            child: Row(
+              children: [
+                Text(
+                  'Saved Playlists',
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                ),
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.add_rounded, size: 18),
+                  onPressed: () => _showCreatePlaylistDialog(context, ref),
+                  tooltip: 'New Playlist',
+                  visualDensity: VisualDensity.compact,
+                ),
               ],
             ),
+          ),
+
+          // Playlists List
+          Expanded(
+            flex: 1,
+            child: savedPlaylists.isEmpty
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Text(
+                        'No saved playlists\nSearch & import from YouTube',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  )
+                : ListView.builder(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    itemCount: savedPlaylists.length,
+                    itemBuilder: (context, index) {
+                      final playlist = savedPlaylists[index];
+                      return ListTile(
+                        dense: true,
+                        leading: Container(
+                          width: 36,
+                          height: 36,
+                          decoration: BoxDecoration(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .surfaceContainerHighest,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Icon(Icons.playlist_play_rounded,
+                              size: 20,
+                              color: Theme.of(context).colorScheme.primary),
+                        ),
+                        title: Text(
+                          playlist.name,
+                          style: const TextStyle(
+                              fontWeight: FontWeight.w600, fontSize: 13),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Text(
+                          '${playlist.tracks.length} songs',
+                          style: const TextStyle(fontSize: 11),
+                        ),
+                        onTap: () {
+                          if (playlist.tracks.isNotEmpty) {
+                            ref
+                                .read(audioPlayerControllerProvider.notifier)
+                                .playPlaylist(playlist.tracks);
+                          }
+                        },
+                      );
+                    },
+                  ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildNavItem(
-    BuildContext context, {
-    required IconData icon,
-    required String label,
-    bool isSelected = false,
-    VoidCallback? onTap,
-  }) {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-      child: ListTile(
-        leading: Icon(
-          icon,
-          color: isSelected 
-              ? Theme.of(context).colorScheme.primary
-              : Theme.of(context).colorScheme.onSurface,
-        ),
-        title: isExpanded ? Text(
-          label,
-          style: TextStyle(
-            color: isSelected 
-                ? Theme.of(context).colorScheme.primary
-                : Theme.of(context).colorScheme.onSurface,
-            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-          ),
-        ) : null,
-        onTap: onTap,
-        selected: isSelected,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(8),
-        ),
-        contentPadding: isExpanded 
-            ? const EdgeInsets.symmetric(horizontal: 16)
-            : const EdgeInsets.all(0),
-        minLeadingWidth: isExpanded ? null : 0,
-      ),
-    );
+  IconData _repeatIcon(RepeatMode mode) {
+    switch (mode) {
+      case RepeatMode.one:
+        return Icons.repeat_one_rounded;
+      case RepeatMode.all:
+      case RepeatMode.off:
+        return Icons.repeat_rounded;
+    }
   }
 
-  void _showCreatePlaylistDialog(BuildContext context) {
+  String _formatDuration(Duration duration) {
+    final minutes = duration.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final seconds = duration.inSeconds.remainder(60).toString().padLeft(2, '0');
+    if (duration.inHours > 0) {
+      return '${duration.inHours}:$minutes:$seconds';
+    }
+    return '$minutes:$seconds';
+  }
+
+  Future<void> _showCreatePlaylistDialog(
+      BuildContext context, WidgetRef ref) async {
     final controller = TextEditingController();
-    
-    showDialog(
+    final playlistName = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Create Playlist'),
+        title: const Text('New Playlist'),
         content: TextField(
           controller: controller,
           decoration: const InputDecoration(
-            labelText: 'Playlist Name',
+            labelText: 'Playlist name',
             border: OutlineInputBorder(),
           ),
+          autofocus: true,
+          onSubmitted: (value) => Navigator.of(context).pop(value),
         ),
         actions: [
           TextButton(
@@ -208,196 +393,30 @@ class LeftSidePanel extends ConsumerWidget {
             child: const Text('Cancel'),
           ),
           ElevatedButton(
-            onPressed: () {
-              if (controller.text.isNotEmpty) {
-                // Create playlist
-                Navigator.of(context).pop();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Playlist "${controller.text}" created'),
-                  ),
-                );
-              }
-            },
+            onPressed: () => Navigator.of(context).pop(controller.text),
             child: const Text('Create'),
           ),
         ],
       ),
     );
-  }
 
-  void _navigateToSearch(BuildContext context) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => const SearchScreen(),
-      ),
-    );
-  }
-
-  void _navigateToQueue(BuildContext context) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => const QueueScreen(),
-      ),
-    );
-  }
-
-  Widget _buildSavedPlaylists(BuildContext context, WidgetRef ref) {
-    final savedPlaylists = ref.watch(savedPlaylistsProvider);
-    
-    if (savedPlaylists.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        child: Text(
-          'No saved playlists',
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.5),
-            fontStyle: FontStyle.italic,
-          ),
-        ),
-      );
-    }
-    
-    return Column(
-      children: savedPlaylists.map((playlist) => _buildPlaylistItem(context, ref, playlist)).toList(),
-    );
-  }
-
-  Widget _buildPlaylistItem(BuildContext context, WidgetRef ref, Playlist playlist) {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-      child: ListTile(
-        leading: Icon(
-          Icons.playlist_play,
-          color: Theme.of(context).colorScheme.primary,
-          size: 20,
-        ),
-        title: Text(
-          playlist.name,
-          style: Theme.of(context).textTheme.bodyMedium,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        subtitle: Text(
-          '${playlist.tracks.length} songs',
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.6),
-          ),
-        ),
-        trailing: PopupMenuButton<String>(
-          onSelected: (value) => _handlePlaylistAction(context, ref, playlist, value),
-          itemBuilder: (context) => [
-            const PopupMenuItem(
-              value: 'play',
-              child: Row(
-                children: [
-                  Icon(Icons.play_arrow),
-                  SizedBox(width: 8),
-                  Text('Play'),
-                ],
-              ),
-            ),
-            const PopupMenuItem(
-              value: 'queue',
-              child: Row(
-                children: [
-                  Icon(Icons.queue),
-                  SizedBox(width: 8),
-                  Text('Add to Queue'),
-                ],
-              ),
-            ),
-            const PopupMenuItem(
-              value: 'delete',
-              child: Row(
-                children: [
-                  Icon(Icons.delete),
-                  SizedBox(width: 8),
-                  Text('Delete'),
-                ],
-              ),
-            ),
-          ],
-        ),
-        onTap: () => _playPlaylist(context, ref, playlist),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(8),
-        ),
-      ),
-    );
-  }
-
-  void _handlePlaylistAction(BuildContext context, WidgetRef ref, Playlist playlist, String action) {
-    final audioController = ref.read(audioPlayerControllerProvider.notifier);
-    
-    switch (action) {
-      case 'play':
-        _playPlaylist(context, ref, playlist);
-        break;
-      case 'queue':
-        audioController.addToQueue(playlist.tracks);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Added "${playlist.name}" to queue'),
-          ),
-        );
-        break;
-      case 'delete':
-        _showDeletePlaylistDialog(context, ref, playlist);
-        break;
-    }
-  }
-
-  void _playPlaylist(BuildContext context, WidgetRef ref, Playlist playlist) {
-    if (playlist.tracks.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Playlist is empty')),
-      );
+    final trimmedName = playlistName?.trim();
+    if (trimmedName == null || trimmedName.isEmpty) {
       return;
     }
-    
-    final audioController = ref.read(audioPlayerControllerProvider.notifier);
-    audioController.playPlaylist(playlist.tracks);
-    
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Playing "${playlist.name}"'),
-        action: SnackBarAction(
-          label: 'Queue',
-          onPressed: () => _navigateToQueue(context),
-        ),
-      ),
-    );
-  }
 
-  void _showDeletePlaylistDialog(BuildContext context, WidgetRef ref, Playlist playlist) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Playlist'),
-        content: Text('Are you sure you want to delete "${playlist.name}"?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              ref.read(savedPlaylistsProvider.notifier).removePlaylist(playlist.id);
-              Navigator.of(context).pop();
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('Deleted "${playlist.name}"')),
-              );
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Theme.of(context).colorScheme.error,
-              foregroundColor: Theme.of(context).colorScheme.onError,
-            ),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
+    final now = DateTime.now();
+    final playlist = Playlist(
+      id: now.millisecondsSinceEpoch.toString(),
+      name: trimmedName,
+      tracks: const [],
+      createdDate: now,
+      lastModified: now,
+    );
+
+    ref.read(savedPlaylistsProvider.notifier).addPlaylist(playlist);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Created playlist "$trimmedName"')),
     );
   }
 }

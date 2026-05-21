@@ -4,7 +4,8 @@ import '../models/playlist.dart';
 import '../models/track.dart';
 
 // Playlist provider
-final playlistProvider = StateNotifierProvider<PlaylistNotifier, List<Track>>((ref) {
+final playlistProvider =
+    StateNotifierProvider<PlaylistNotifier, List<Track>>((ref) {
   return PlaylistNotifier();
 });
 
@@ -60,18 +61,18 @@ class PlaylistNotifier extends StateNotifier<List<Track>> {
 
   List<Track> searchTracks(String query) {
     if (query.isEmpty) return state;
-    
+
     final lowerQuery = query.toLowerCase();
     return state.where((track) {
       return track.title.toLowerCase().contains(lowerQuery) ||
-             track.artist.toLowerCase().contains(lowerQuery) ||
-             track.album.toLowerCase().contains(lowerQuery);
+          track.artist.toLowerCase().contains(lowerQuery) ||
+          track.album.toLowerCase().contains(lowerQuery);
     }).toList();
   }
 
   void sortTracks(SortOption sortOption) {
     final tracks = List<Track>.from(state);
-    
+
     switch (sortOption) {
       case SortOption.title:
         tracks.sort((a, b) => a.title.compareTo(b.title));
@@ -89,7 +90,7 @@ class PlaylistNotifier extends StateNotifier<List<Track>> {
         tracks.sort((a, b) => b.addedDate.compareTo(a.addedDate));
         break;
     }
-    
+
     state = tracks;
   }
 }

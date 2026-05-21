@@ -25,12 +25,14 @@ class YouTubePlaylist {
 
   // Create from YouTube API data
   factory YouTubePlaylist.fromJson(Map<String, dynamic> json) {
+    final thumbnailSource =
+        json['thumbnails'] ?? json['thumbnail'] ?? json['thumbnailUrl'];
     return YouTubePlaylist(
       id: json['playlistId'] ?? json['id'] ?? '',
       title: json['title'] ?? 'Unknown Playlist',
       author: json['author'] ?? json['uploader'] ?? 'Unknown Creator',
       description: json['description'] ?? '',
-      thumbnailUrl: _extractThumbnail(json['thumbnails']),
+      thumbnailUrl: _extractThumbnail(thumbnailSource),
       trackCount: json['trackCount'] ?? json['videoCount'] ?? 0,
       totalDuration: Duration(seconds: json['duration'] ?? 0),
       createdDate: _parseDate(json['published'] ?? json['uploadDate']),
@@ -40,6 +42,9 @@ class YouTubePlaylist {
   }
 
   static String _extractThumbnail(dynamic thumbnails) {
+    if (thumbnails is String && thumbnails.isNotEmpty) {
+      return thumbnails;
+    }
     if (thumbnails is List && thumbnails.isNotEmpty) {
       // Get highest quality thumbnail
       final thumb = thumbnails.last;
@@ -52,7 +57,7 @@ class YouTubePlaylist {
 
   static DateTime _parseDate(dynamic date) {
     if (date == null) return DateTime.now();
-    
+
     try {
       if (date is String) {
         // Handle various date formats
@@ -60,7 +65,8 @@ class YouTubePlaylist {
           return DateTime.parse(date);
         } else if (date.length == 8) {
           // YYYYMMDD format
-          return DateTime.parse('${date.substring(0, 4)}-${date.substring(4, 6)}-${date.substring(6, 8)}');
+          return DateTime.parse(
+              '${date.substring(0, 4)}-${date.substring(4, 6)}-${date.substring(6, 8)}');
         }
       }
       return DateTime.now();
@@ -107,7 +113,7 @@ class YouTubePlaylist {
   String get formattedDuration {
     final hours = totalDuration.inHours;
     final minutes = totalDuration.inMinutes % 60;
-    
+
     if (hours > 0) {
       return '${hours}h ${minutes}m';
     } else {

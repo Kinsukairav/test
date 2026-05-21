@@ -1,7 +1,9 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/download_manager_provider.dart';
 import '../models/playlist.dart';
+import '../providers/navigation_provider.dart';
 
 class DownloadManagerScreen extends ConsumerWidget {
   const DownloadManagerScreen({super.key});
@@ -17,12 +19,13 @@ class DownloadManagerScreen extends ConsumerWidget {
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: () => _handleBack(context, ref),
         ),
         actions: [
           PopupMenuButton<String>(
             onSelected: (value) {
-              final downloadManager = ref.read(downloadManagerProvider.notifier);
+              final downloadManager =
+                  ref.read(downloadManagerProvider.notifier);
               switch (value) {
                 case 'clear_completed':
                   downloadManager.clearCompleted();
@@ -64,7 +67,7 @@ class DownloadManagerScreen extends ConsumerWidget {
         children: [
           // Download Stats
           _buildDownloadStats(context, downloadState),
-          
+
           // Downloads List
           Expanded(
             child: _buildDownloadsList(context, ref, downloadState),
@@ -81,7 +84,7 @@ class DownloadManagerScreen extends ConsumerWidget {
         color: Theme.of(context).colorScheme.surface,
         border: Border(
           bottom: BorderSide(
-            color: Theme.of(context).colorScheme.outline.withOpacity(0.2),
+            color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.2),
             width: 1,
           ),
         ),
@@ -132,13 +135,14 @@ class DownloadManagerScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildStatCard(BuildContext context, String label, String value, IconData icon, Color color) {
+  Widget _buildStatCard(BuildContext context, String label, String value,
+      IconData icon, Color color) {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
+        color: color.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withOpacity(0.3)),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -148,22 +152,23 @@ class DownloadManagerScreen extends ConsumerWidget {
           Text(
             value,
             style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.bold,
-              color: color,
-            ),
+                  fontWeight: FontWeight.bold,
+                  color: color,
+                ),
           ),
           Text(
             label,
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: color,
-            ),
+                  color: color,
+                ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildDownloadsList(BuildContext context, WidgetRef ref, DownloadManagerState state) {
+  Widget _buildDownloadsList(
+      BuildContext context, WidgetRef ref, DownloadManagerState state) {
     if (state.downloads.isEmpty) {
       return Center(
         child: Column(
@@ -172,21 +177,25 @@ class DownloadManagerScreen extends ConsumerWidget {
             Icon(
               Icons.download,
               size: 64,
-              color: Theme.of(context).colorScheme.primary.withOpacity(0.5),
+              color:
+                  Theme.of(context).colorScheme.primary.withValues(alpha: 0.5),
             ),
             const SizedBox(height: 16),
             Text(
               'No Downloads Yet',
               style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.w500,
-              ),
+                    fontWeight: FontWeight.w500,
+                  ),
             ),
             const SizedBox(height: 8),
             Text(
               'Search for music and start downloading',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
-              ),
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withValues(alpha: 0.7),
+                  ),
             ),
           ],
         ),
@@ -201,17 +210,33 @@ class DownloadManagerScreen extends ConsumerWidget {
         return DownloadTaskTile(
           task: download,
           onRetry: () {
-            ref.read(downloadManagerProvider.notifier).retryDownload(download.id);
+            ref
+                .read(downloadManagerProvider.notifier)
+                .retryDownload(download.id);
           },
           onCancel: () {
-            ref.read(downloadManagerProvider.notifier).cancelDownload(download.id);
+            ref
+                .read(downloadManagerProvider.notifier)
+                .cancelDownload(download.id);
           },
           onRemove: () {
-            ref.read(downloadManagerProvider.notifier).removeDownload(download.id);
+            ref
+                .read(downloadManagerProvider.notifier)
+                .removeDownload(download.id);
           },
         );
       },
     );
+  }
+
+  void _handleBack(BuildContext context, WidgetRef ref) {
+    final navigator = Navigator.of(context);
+    if (navigator.canPop()) {
+      navigator.pop();
+      return;
+    }
+
+    ref.read(activeScreenProvider.notifier).state = 0;
   }
 }
 
@@ -257,7 +282,10 @@ class DownloadTaskTile extends StatelessWidget {
                       Text(
                         task.artist,
                         style: TextStyle(
-                          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurface
+                              .withValues(alpha: 0.7),
                           fontSize: 14,
                         ),
                         maxLines: 1,
@@ -271,7 +299,6 @@ class DownloadTaskTile extends StatelessWidget {
                 _buildActionButton(context),
               ],
             ),
-            
             if (task.status == DownloadStatus.downloading) ...[
               const SizedBox(height: 12),
               Column(
@@ -284,7 +311,10 @@ class DownloadTaskTile extends StatelessWidget {
                         'Downloading...',
                         style: TextStyle(
                           fontSize: 12,
-                          color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                          color: Theme.of(context)
+                              .colorScheme
+                              .onSurface
+                              .withValues(alpha: 0.7),
                         ),
                       ),
                       Text(
@@ -300,7 +330,10 @@ class DownloadTaskTile extends StatelessWidget {
                   const SizedBox(height: 4),
                   LinearProgressIndicator(
                     value: task.progress,
-                    backgroundColor: Theme.of(context).colorScheme.outline.withOpacity(0.2),
+                    backgroundColor: Theme.of(context)
+                        .colorScheme
+                        .outline
+                        .withValues(alpha: 0.2),
                     valueColor: AlwaysStoppedAnimation<Color>(
                       Theme.of(context).colorScheme.primary,
                     ),
@@ -308,7 +341,6 @@ class DownloadTaskTile extends StatelessWidget {
                 ],
               ),
             ],
-            
             if (task.status == DownloadStatus.failed && task.error != null) ...[
               const SizedBox(height: 8),
               Text(
@@ -321,7 +353,6 @@ class DownloadTaskTile extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
               ),
             ],
-            
             if (task.status == DownloadStatus.completed) ...[
               const SizedBox(height: 8),
               Text(
@@ -403,7 +434,33 @@ class DownloadTaskTile extends StatelessWidget {
   }
 
   String _formatFileSize(String? filePath) {
-    // TODO: Implement actual file size calculation
-    return 'Unknown size';
+    if (filePath == null || filePath.isEmpty) {
+      return 'Unknown size';
+    }
+
+    try {
+      final file = File(filePath);
+      if (!file.existsSync()) {
+        return 'Unknown size';
+      }
+
+      final bytes = file.lengthSync();
+      return _formatBytes(bytes);
+    } catch (_) {
+      return 'Unknown size';
+    }
+  }
+
+  String _formatBytes(int bytes) {
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    double size = bytes.toDouble();
+    var unitIndex = 0;
+
+    while (size >= 1024 && unitIndex < units.length - 1) {
+      size /= 1024;
+      unitIndex++;
+    }
+
+    return '${size.toStringAsFixed(size >= 10 ? 0 : 1)} ${units[unitIndex]}';
   }
 }

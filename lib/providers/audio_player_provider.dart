@@ -1,5 +1,4 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:audioplayers/audioplayers.dart';
 import '../models/track.dart';
 import '../models/playlist.dart';
 import '../models/search_result.dart';
@@ -43,7 +42,8 @@ final currentTrackIndexProvider = StateProvider<int>((ref) => -1);
 final queueProvider = StateProvider<List<Track>>((ref) => []);
 
 // Saved playlists provider
-final savedPlaylistsProvider = StateNotifierProvider<SavedPlaylistsNotifier, List<Playlist>>((ref) {
+final savedPlaylistsProvider =
+    StateNotifierProvider<SavedPlaylistsNotifier, List<Playlist>>((ref) {
   return SavedPlaylistsNotifier();
 });
 
@@ -96,7 +96,8 @@ final playingWatcherProvider = Provider<void>((ref) {
 });
 
 // Audio player controller
-final audioPlayerControllerProvider = StateNotifierProvider<AudioPlayerController, AudioPlayerState>((ref) {
+final audioPlayerControllerProvider =
+    StateNotifierProvider<AudioPlayerController, AudioPlayerState>((ref) {
   return AudioPlayerController(ref);
 });
 
@@ -149,34 +150,35 @@ class AudioPlayerState {
   }
 }
 
+enum RepeatMode { off, all, one }
+
 // Audio player controller with streaming support
 class AudioPlayerController extends StateNotifier<AudioPlayerState> {
-  
   AudioPlayerController(this._ref) : super(const AudioPlayerState()) {
     _audioService = _ref.read(audioPlayerServiceProvider);
     _youtubeService = _ref.read(youtubeServiceProvider);
     _initializeAudioHandlers();
   }
-  
+
   final Ref _ref;
   late final AudioPlayerService _audioService;
   late final YouTubeService _youtubeService;
 
   void _initializeAudioHandlers() {
     // Listen for audio completion to automatically play next track
-    _audioService.audioPlayer.onPlayerStateChanged.listen((PlayerState playerState) {
-      if (playerState == PlayerState.completed) {
+    _audioService.completedStream.listen((bool completed) {
+      if (completed) {
         print('🎵 Track completed, checking for next track...');
         _handleTrackCompletion();
       }
     });
-    
+
     // Listen for position updates
     _audioService.positionStream.listen((position) {
       state = state.copyWith(currentPosition: position);
       _ref.read(currentPositionProvider.notifier).state = position;
     });
-    
+
     // Listen for duration updates
     _audioService.durationStream.listen((duration) {
       if (duration != null) {
@@ -190,9 +192,10 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
     final repeatMode = _ref.read(repeatModeProvider);
     final queue = _ref.read(queueProvider);
     final currentIndex = _ref.read(currentTrackIndexProvider);
-    
-    print('🏁 Track completion handler - Repeat: $repeatMode, Index: $currentIndex, Queue: ${queue.length}');
-    
+
+    print(
+        '🏁 Track completion handler - Repeat: $repeatMode, Index: $currentIndex, Queue: ${queue.length}');
+
     switch (repeatMode) {
       case RepeatMode.one:
         // Repeat current track
@@ -201,7 +204,7 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
           _playTrackFromQueue(state.currentTrack!);
         }
         break;
-        
+
       case RepeatMode.all:
         // Play next track or loop to beginning
         if (queue.isNotEmpty) {
@@ -216,7 +219,7 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
           }
         }
         break;
-        
+
       case RepeatMode.off:
         // Play next track if available
         if (queue.isNotEmpty && currentIndex < queue.length - 1) {
@@ -236,19 +239,19 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
   Future<void> playFromSearchResult(SearchResult searchResult) async {
     try {
       state = state.copyWith(isLoading: true, error: null);
-      
+
       print('🎵 Starting stream for: ${searchResult.title}');
       print('🔍 Video ID: ${searchResult.videoId}');
-      
+
       // Validate video ID
       if (searchResult.videoId.isEmpty) {
         throw Exception('Invalid video ID for track: ${searchResult.title}');
       }
-      
+
       // Get stream URL using yt-dlp with retry mechanism
       String? streamUrl;
       int retries = 3;
-      
+
       for (int i = 0; i < retries; i++) {
         try {
           streamUrl = await _youtubeService.getStreamUrl(searchResult.videoId);
@@ -261,35 +264,39 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
           await Future.delayed(Duration(seconds: 1)); // Wait before retry
         }
       }
-      
+
       if (streamUrl == null || streamUrl.isEmpty) {
-        throw Exception('Failed to get stream URL after $retries attempts for: ${searchResult.title}');
+        throw Exception(
+            'Failed to get stream URL after $retries attempts for: ${searchResult.title}');
       }
-      
+
       // Validate URL format
       if (!streamUrl.startsWith('http')) {
         throw Exception('Invalid stream URL format: $streamUrl');
       }
-      
+
       print('🔗 Stream URL obtained: ${streamUrl.substring(0, 100)}...');
-      
+
       // Convert SearchResult to Track
       final track = Track(
         id: searchResult.videoId,
         title: searchResult.title,
         artist: searchResult.artist,
         album: searchResult.album ?? 'Unknown Album',
-        albumArt: searchResult.thumbnailUrl.isNotEmpty ? searchResult.thumbnailUrl : null,
+        albumArt: searchResult.thumbnailUrl.isNotEmpty
+            ? searchResult.thumbnailUrl
+            : null,
         duration: searchResult.duration,
         filePath: streamUrl, // Use stream URL as file path
         format: 'stream',
         addedDate: DateTime.now(),
       );
-      
+
       // Play the stream using the real audio service
-      print('🎧 Starting audio playback with URL: ${streamUrl.substring(0, 50)}...');
+      print(
+          '🎧 Starting audio playback with URL: ${streamUrl.substring(0, 50)}...');
       await _audioService.playFromUrl(streamUrl);
-      
+
       state = state.copyWith(
         currentTrack: track,
         isPlaying: true,
@@ -297,29 +304,29 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
         totalDuration: searchResult.duration,
         currentPosition: Duration.zero,
       );
-      
+
       // Update legacy providers for backward compatibility
       _ref.read(currentTrackProvider.notifier).state = track;
       _ref.read(isPlayingProvider.notifier).state = true;
       _ref.read(isLoadingProvider.notifier).state = false;
       _ref.read(totalDurationProvider.notifier).state = searchResult.duration;
-      
+
       print('✅ Successfully started streaming: ${track.title}');
-      print('⏰ Duration: ${searchResult.duration.inMinutes}:${(searchResult.duration.inSeconds % 60).toString().padLeft(2, '0')}');
-      
+      print(
+          '⏰ Duration: ${searchResult.duration.inMinutes}:${(searchResult.duration.inSeconds % 60).toString().padLeft(2, '0')}');
     } catch (e) {
       print('❌ Streaming error: $e');
-      
+
       final errorMessage = e.toString().contains('Exception: ')
           ? e.toString().replaceFirst('Exception: ', '')
           : 'Failed to stream: ${e.toString()}';
-      
+
       state = state.copyWith(
         isLoading: false,
         isPlaying: false,
         error: errorMessage,
       );
-      
+
       // Update legacy providers
       _ref.read(isLoadingProvider.notifier).state = false;
       _ref.read(isPlayingProvider.notifier).state = false;
@@ -330,9 +337,9 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
   Future<void> playTrack(Track track) async {
     try {
       state = state.copyWith(isLoading: true, error: null);
-      
+
       await _audioService.playTrack(track);
-      
+
       state = state.copyWith(
         currentTrack: track,
         isPlaying: true,
@@ -340,21 +347,21 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
         totalDuration: track.duration,
         currentPosition: Duration.zero,
       );
-      
+
       // Update legacy providers
       _ref.read(currentTrackProvider.notifier).state = track;
       _ref.read(isPlayingProvider.notifier).state = true;
       _ref.read(isLoadingProvider.notifier).state = false;
-      
     } catch (e) {
       state = state.copyWith(
         isLoading: false,
         isPlaying: false,
         error: 'Failed to play track: ${e.toString()}',
       );
-      
+
       _ref.read(isLoadingProvider.notifier).state = false;
-      _ref.read(errorProvider.notifier).state = 'Failed to play track: ${e.toString()}';
+      _ref.read(errorProvider.notifier).state =
+          'Failed to play track: ${e.toString()}';
     }
   }
 
@@ -437,20 +444,24 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
   Future<void> playPrevious() async {
     final queue = _ref.read(queueProvider);
     final currentIndex = _ref.read(currentTrackIndexProvider);
-    
-    print('🔀 Previous button pressed - Current index: $currentIndex, Queue length: ${queue.length}');
-    
+
+    print(
+        '🔀 Previous button pressed - Current index: $currentIndex, Queue length: ${queue.length}');
+
     if (queue.isNotEmpty && currentIndex > 0) {
       final previousIndex = currentIndex - 1;
       final previousTrack = queue[previousIndex];
-      print('🎵 Playing previous track: ${previousTrack.title} (index: $previousIndex)');
+      print(
+          '🎵 Playing previous track: ${previousTrack.title} (index: $previousIndex)');
       _ref.read(currentTrackIndexProvider.notifier).state = previousIndex;
       await _playTrackFromQueue(previousTrack);
-    } else if (_ref.read(repeatModeProvider) == RepeatMode.all && queue.isNotEmpty) {
+    } else if (_ref.read(repeatModeProvider) == RepeatMode.all &&
+        queue.isNotEmpty) {
       // Loop back to last track
       final lastIndex = queue.length - 1;
       final lastTrack = queue[lastIndex];
-      print('🔁 Looping back to last track: ${lastTrack.title} (index: $lastIndex)');
+      print(
+          '🔁 Looping back to last track: ${lastTrack.title} (index: $lastIndex)');
       _ref.read(currentTrackIndexProvider.notifier).state = lastIndex;
       await _playTrackFromQueue(lastTrack);
     } else {
@@ -461,16 +472,18 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
   Future<void> playNext() async {
     final queue = _ref.read(queueProvider);
     final currentIndex = _ref.read(currentTrackIndexProvider);
-    
-    print('🔀 Next button pressed - Current index: $currentIndex, Queue length: ${queue.length}');
-    
+
+    print(
+        '🔀 Next button pressed - Current index: $currentIndex, Queue length: ${queue.length}');
+
     if (queue.isNotEmpty && currentIndex < queue.length - 1) {
       final nextIndex = currentIndex + 1;
       final nextTrack = queue[nextIndex];
       print('🎵 Playing next track: ${nextTrack.title} (index: $nextIndex)');
       _ref.read(currentTrackIndexProvider.notifier).state = nextIndex;
       await _playTrackFromQueue(nextTrack);
-    } else if (_ref.read(repeatModeProvider) == RepeatMode.all && queue.isNotEmpty) {
+    } else if (_ref.read(repeatModeProvider) == RepeatMode.all &&
+        queue.isNotEmpty) {
       // Loop back to first track
       final firstTrack = queue[0];
       print('🔁 Looping back to first track: ${firstTrack.title}');
@@ -485,25 +498,27 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
   Future<void> _playTrackFromQueue(Track track) async {
     try {
       state = state.copyWith(isLoading: true, error: null);
-      
+
       print('🎵 Playing from queue: ${track.title}');
       print('🔍 Track ID: ${track.id}');
       print('📁 Original filePath: ${track.filePath}');
-      
+
       // Validate track ID
       if (track.id.isEmpty) {
         throw Exception('Invalid track ID for: ${track.title}');
       }
-      
+
       // Get stream URL using yt-dlp with retry mechanism
       String? streamUrl;
       int retries = 3;
-      
+
       for (int i = 0; i < retries; i++) {
         try {
           print('🔄 Attempt ${i + 1}: Fetching stream URL for ${track.id}...');
           streamUrl = await _youtubeService.getStreamUrl(track.id);
-          if (streamUrl != null && streamUrl.isNotEmpty && streamUrl.startsWith('http')) {
+          if (streamUrl != null &&
+              streamUrl.isNotEmpty &&
+              streamUrl.startsWith('http')) {
             print('✅ Valid stream URL obtained on attempt ${i + 1}');
             break;
           } else {
@@ -512,16 +527,20 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
         } catch (e) {
           print('❌ Queue stream URL attempt ${i + 1} failed: $e');
           if (i == retries - 1) rethrow;
-          await Future.delayed(Duration(seconds: 2)); // Longer delay for retries
+          await Future.delayed(
+              Duration(seconds: 2)); // Longer delay for retries
         }
       }
-      
-      if (streamUrl == null || streamUrl.isEmpty || !streamUrl.startsWith('http')) {
-        throw Exception('Failed to get valid stream URL after $retries attempts for: ${track.title}');
+
+      if (streamUrl == null ||
+          streamUrl.isEmpty ||
+          !streamUrl.startsWith('http')) {
+        throw Exception(
+            'Failed to get valid stream URL after $retries attempts for: ${track.title}');
       }
 
       print('🔗 Queue stream URL obtained: ${streamUrl.substring(0, 80)}...');
-      
+
       // Create updated track with stream URL
       final updatedTrack = Track(
         id: track.id,
@@ -537,11 +556,11 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
         sampleRate: track.sampleRate,
         bitDepth: track.bitDepth,
       );
-      
+
       // Play the stream using the real audio service
       print('🎧 Starting audio playback...');
       await _audioService.playFromUrl(streamUrl);
-      
+
       state = state.copyWith(
         currentTrack: updatedTrack,
         isPlaying: true,
@@ -549,25 +568,25 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
         totalDuration: track.duration,
         currentPosition: Duration.zero,
       );
-      
+
       // Update legacy providers for backward compatibility
       _ref.read(currentTrackProvider.notifier).state = updatedTrack;
       _ref.read(isPlayingProvider.notifier).state = true;
       _ref.read(isLoadingProvider.notifier).state = false;
       _ref.read(totalDurationProvider.notifier).state = track.duration;
-      
+
       print('✅ Successfully started streaming from queue: ${track.title}');
-      
     } catch (e) {
       print('❌ Queue streaming error: $e');
-      
+
       state = state.copyWith(
         isLoading: false,
         error: 'Failed to play track from queue: ${e.toString()}',
       );
-      
+
       _ref.read(isLoadingProvider.notifier).state = false;
-      _ref.read(errorProvider.notifier).state = 'Failed to play track from queue: ${e.toString()}';
+      _ref.read(errorProvider.notifier).state =
+          'Failed to play track from queue: ${e.toString()}';
     }
   }
 
@@ -586,17 +605,18 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
     final queue = _ref.read(queueProvider);
     if (index >= 0 && index < queue.length) {
       _ref.read(currentTrackIndexProvider.notifier).state = index;
-      await _playTrackFromQueue(queue[index]); // Use streaming method instead of playTrack
+      await _playTrackFromQueue(
+          queue[index]); // Use streaming method instead of playTrack
     }
   }
 
   Future<void> playPlaylist(List<Track> tracks, {int startIndex = 0}) async {
     if (tracks.isEmpty) return;
-    
+
     // Clear and set new queue
     _ref.read(queueProvider.notifier).state = tracks;
     _ref.read(currentTrackIndexProvider.notifier).state = startIndex;
-    
+
     // Play the selected track using streaming method
     await _playTrackFromQueue(tracks[startIndex]);
   }
@@ -604,15 +624,15 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
   // Play track by index from queue (with fresh URL fetching)
   Future<void> playTrackFromQueueByIndex(int index) async {
     final queue = _ref.read(queueProvider);
-    
+
     if (index < 0 || index >= queue.length) {
       print('❌ Invalid queue index: $index');
       return;
     }
-    
+
     // Update current index
     _ref.read(currentTrackIndexProvider.notifier).state = index;
-    
+
     // Play the track with fresh stream URL
     await _playTrackFromQueue(queue[index]);
   }
@@ -626,25 +646,27 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
   Future<void> syncAndPlayTrack(Track track) async {
     try {
       state = state.copyWith(isLoading: true, error: null);
-      
+
       print('🔄 Syncing track: ${track.title}');
       print('🆔 Track ID: ${track.id}');
-      
+
       // Validate track ID
       if (track.id.isEmpty) {
         throw Exception('Invalid track ID for: ${track.title}');
       }
-      
+
       // Re-fetch video information to get fresh stream URL
       String? streamUrl;
       int retries = 3;
-      
+
       for (int i = 0; i < retries; i++) {
         try {
           print('🔍 Attempt ${i + 1}: Fetching fresh stream URL...');
           streamUrl = await _youtubeService.getStreamUrl(track.id);
-          
-          if (streamUrl != null && streamUrl.isNotEmpty && streamUrl.startsWith('http')) {
+
+          if (streamUrl != null &&
+              streamUrl.isNotEmpty &&
+              streamUrl.startsWith('http')) {
             print('✅ Fresh stream URL obtained on attempt ${i + 1}');
             break;
           } else {
@@ -653,16 +675,21 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
         } catch (e) {
           print('❌ Stream URL attempt ${i + 1} failed: $e');
           if (i == retries - 1) rethrow;
-          await Future.delayed(Duration(seconds: 2)); // Longer delay for retries
+          await Future.delayed(
+              Duration(seconds: 2)); // Longer delay for retries
         }
       }
-      
-      if (streamUrl == null || streamUrl.isEmpty || !streamUrl.startsWith('http')) {
-        throw Exception('Failed to obtain valid stream URL after $retries attempts for: ${track.title}');
+
+      if (streamUrl == null ||
+          streamUrl.isEmpty ||
+          !streamUrl.startsWith('http')) {
+        throw Exception(
+            'Failed to obtain valid stream URL after $retries attempts for: ${track.title}');
       }
-      
-      print('🎵 Starting playback with fresh URL: ${streamUrl.substring(0, 80)}...');
-      
+
+      print(
+          '🎵 Starting playback with fresh URL: ${streamUrl.substring(0, 80)}...');
+
       // Update track with fresh stream URL
       final updatedTrack = Track(
         id: track.id,
@@ -678,10 +705,10 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
         sampleRate: track.sampleRate,
         bitDepth: track.bitDepth,
       );
-      
+
       // Play using the audio service
       await _audioService.playFromUrl(streamUrl);
-      
+
       // Update state
       state = state.copyWith(
         currentTrack: updatedTrack,
@@ -691,25 +718,25 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
         currentPosition: Duration.zero,
         error: null,
       );
-      
+
       // Update legacy providers
       _ref.read(currentTrackProvider.notifier).state = updatedTrack;
       _ref.read(isPlayingProvider.notifier).state = true;
       _ref.read(isLoadingProvider.notifier).state = false;
       _ref.read(totalDurationProvider.notifier).state = track.duration;
-      
+
       print('🎉 Successfully synced and started playing: ${track.title}');
-      
     } catch (e) {
       print('💥 Sync and play error: $e');
-      
+
       state = state.copyWith(
         isLoading: false,
         error: 'Failed to sync and play track: ${e.toString()}',
       );
-      
+
       _ref.read(isLoadingProvider.notifier).state = false;
-      _ref.read(errorProvider.notifier).state = 'Failed to sync and play track: ${e.toString()}';
+      _ref.read(errorProvider.notifier).state =
+          'Failed to sync and play track: ${e.toString()}';
     }
   }
 }
@@ -727,7 +754,9 @@ class SavedPlaylistsNotifier extends StateNotifier<List<Playlist>> {
   }
 
   void updatePlaylist(Playlist updatedPlaylist) {
-    state = state.map((p) => p.id == updatedPlaylist.id ? updatedPlaylist : p).toList();
+    state = state
+        .map((p) => p.id == updatedPlaylist.id ? updatedPlaylist : p)
+        .toList();
   }
 
   Playlist? getPlaylist(String id) {
