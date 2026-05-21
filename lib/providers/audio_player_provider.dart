@@ -101,6 +101,9 @@ final audioPlayerControllerProvider =
   return AudioPlayerController(ref);
 });
 
+// Sentinel object used to distinguish "pass null explicitly" from "omitted"
+const _absent = Object();
+
 // Audio player state
 class AudioPlayerState {
   final Track? currentTrack;
@@ -125,25 +128,29 @@ class AudioPlayerState {
     this.currentIndex = -1,
   });
 
+  /// Pass [_absent] (the module-level const) to leave a field unchanged.
+  /// Pass explicit `null` to clear a nullable field.
   AudioPlayerState copyWith({
-    Track? currentTrack,
+    Object? currentTrack = _absent,
     bool? isPlaying,
     bool? isLoading,
     Duration? currentPosition,
     Duration? totalDuration,
     double? volume,
-    String? error,
+    Object? error = _absent,
     List<Track>? playlist,
     int? currentIndex,
   }) {
     return AudioPlayerState(
-      currentTrack: currentTrack ?? this.currentTrack,
+      currentTrack: currentTrack == _absent
+          ? this.currentTrack
+          : currentTrack as Track?,
       isPlaying: isPlaying ?? this.isPlaying,
       isLoading: isLoading ?? this.isLoading,
       currentPosition: currentPosition ?? this.currentPosition,
       totalDuration: totalDuration ?? this.totalDuration,
       volume: volume ?? this.volume,
-      error: error ?? this.error,
+      error: error == _absent ? this.error : error as String?,
       playlist: playlist ?? this.playlist,
       currentIndex: currentIndex ?? this.currentIndex,
     );
@@ -163,6 +170,16 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
   final Ref _ref;
   late final AudioPlayerService _audioService;
   late final YouTubeService _youtubeService;
+
+  // ── Concurrency guard ────────────────────────────────────────────────────
+  // Prevents two concurrent _playTrackFromQueue calls from racing into
+  // media_kit's native layer simultaneously (which causes FFI shutdown crashes).
+  bool _isTransitioningTrack = false;
+
+  // Monotonically-incrementing token: each _playTrackFromQueue call captures
+  // the current generation. If it has changed by the time the stream URL
+  // resolves, the stale call bails out instead of calling playFromUrl.
+  int _playbackGeneration = 0;
 
   void _initializeAudioHandlers() {
     // Listen for audio completion to automatically play next track
@@ -189,6 +206,18 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
   }
 
   void _handleTrackCompletion() {
+    // Don't react to completion events while we are already transitioning to
+    // the next track — media_kit can fire the completed stream multiple times
+    // during a source change, which would cause double-play race conditions.
+    if (_isTransitioningTrack) {
+      print('🔒 Track completion ignored — already transitioning');
+      return;
+    }
+    if (state.isLoading) {
+      print('🔒 Track completion ignored — player is loading');
+      return;
+    }
+
     final repeatMode = _ref.read(repeatModeProvider);
     final queue = _ref.read(queueProvider);
     final currentIndex = _ref.read(currentTrackIndexProvider);
@@ -198,7 +227,6 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
 
     switch (repeatMode) {
       case RepeatMode.one:
-        // Repeat current track
         if (state.currentTrack != null) {
           print('🔁 Repeating current track: ${state.currentTrack!.title}');
           _playTrackFromQueue(state.currentTrack!);
@@ -206,13 +234,11 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
         break;
 
       case RepeatMode.all:
-        // Play next track or loop to beginning
         if (queue.isNotEmpty) {
           if (currentIndex < queue.length - 1) {
             print('🎵 Auto-playing next track in queue');
             playNext();
           } else {
-            // Loop back to first track
             print('🔁 Queue completed, looping back to first track');
             _ref.read(currentTrackIndexProvider.notifier).state = 0;
             _playTrackFromQueue(queue[0]);
@@ -221,12 +247,10 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
         break;
 
       case RepeatMode.off:
-        // Play next track if available
         if (queue.isNotEmpty && currentIndex < queue.length - 1) {
           print('🎵 Auto-playing next track in queue');
           playNext();
         } else {
-          // End of queue, stop playback
           print('🛑 End of queue reached, stopping playback');
           state = state.copyWith(isPlaying: false);
           _ref.read(isPlayingProvider.notifier).state = false;
@@ -496,6 +520,17 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
 
   // Helper method to play track from queue with proper streaming
   Future<void> _playTrackFromQueue(Track track) async {
+    // ── Concurrency guard ────────────────────────────────────────────────
+    // Bump the generation counter. Any in-flight call with the old generation
+    // will see the mismatch and abandon before touching the audio player.
+    final myGeneration = ++_playbackGeneration;
+
+    if (_isTransitioningTrack) {
+      print(
+          '⚠️ _playTrackFromQueue called while already transitioning — cancelling previous');
+    }
+    _isTransitioningTrack = true;
+
     try {
       state = state.copyWith(isLoading: true, error: null);
 
@@ -503,16 +538,20 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
       print('🔍 Track ID: ${track.id}');
       print('📁 Original filePath: ${track.filePath}');
 
-      // Validate track ID
       if (track.id.isEmpty) {
         throw Exception('Invalid track ID for: ${track.title}');
       }
 
-      // Get stream URL using yt-dlp with retry mechanism
       String? streamUrl;
-      int retries = 3;
+      const retries = 3;
 
       for (int i = 0; i < retries; i++) {
+        // Bail out if a newer play request has arrived
+        if (myGeneration != _playbackGeneration) {
+          print(
+              '🚫 Stale play request for ${track.title} — a newer track was requested');
+          return;
+        }
         try {
           print('🔄 Attempt ${i + 1}: Fetching stream URL for ${track.id}...');
           streamUrl = await _youtubeService.getStreamUrl(track.id);
@@ -527,9 +566,14 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
         } catch (e) {
           print('❌ Queue stream URL attempt ${i + 1} failed: $e');
           if (i == retries - 1) rethrow;
-          await Future.delayed(
-              Duration(seconds: 2)); // Longer delay for retries
+          await Future.delayed(const Duration(seconds: 2));
         }
+      }
+
+      // Final stale check after the async URL fetch
+      if (myGeneration != _playbackGeneration) {
+        print('🚫 Stale play request for ${track.title} — discarding');
+        return;
       }
 
       if (streamUrl == null ||
@@ -541,7 +585,6 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
 
       print('🔗 Queue stream URL obtained: ${streamUrl.substring(0, 80)}...');
 
-      // Create updated track with stream URL
       final updatedTrack = Track(
         id: track.id,
         title: track.title,
@@ -549,7 +592,7 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
         album: track.album,
         albumArt: track.albumArt,
         duration: track.duration,
-        filePath: streamUrl, // Set the fresh stream URL
+        filePath: streamUrl,
         format: 'stream',
         addedDate: track.addedDate,
         isFavorite: track.isFavorite,
@@ -557,9 +600,15 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
         bitDepth: track.bitDepth,
       );
 
-      // Play the stream using the real audio service
       print('🎧 Starting audio playback...');
       await _audioService.playFromUrl(streamUrl);
+
+      // Guard: another play call may have won the race between URL fetch and
+      // playFromUrl completion — only update state if still our generation.
+      if (myGeneration != _playbackGeneration) {
+        print('🚫 State update skipped — generation mismatch after playFromUrl');
+        return;
+      }
 
       state = state.copyWith(
         currentTrack: updatedTrack,
@@ -569,7 +618,6 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
         currentPosition: Duration.zero,
       );
 
-      // Update legacy providers for backward compatibility
       _ref.read(currentTrackProvider.notifier).state = updatedTrack;
       _ref.read(isPlayingProvider.notifier).state = true;
       _ref.read(isLoadingProvider.notifier).state = false;
@@ -579,14 +627,19 @@ class AudioPlayerController extends StateNotifier<AudioPlayerState> {
     } catch (e) {
       print('❌ Queue streaming error: $e');
 
-      state = state.copyWith(
-        isLoading: false,
-        error: 'Failed to play track from queue: ${e.toString()}',
-      );
-
-      _ref.read(isLoadingProvider.notifier).state = false;
-      _ref.read(errorProvider.notifier).state =
-          'Failed to play track from queue: ${e.toString()}';
+      if (myGeneration == _playbackGeneration) {
+        state = state.copyWith(
+          isLoading: false,
+          error: 'Failed to play track from queue: ${e.toString()}',
+        );
+        _ref.read(isLoadingProvider.notifier).state = false;
+        _ref.read(errorProvider.notifier).state =
+            'Failed to play track from queue: ${e.toString()}';
+      }
+    } finally {
+      if (myGeneration == _playbackGeneration) {
+        _isTransitioningTrack = false;
+      }
     }
   }
 

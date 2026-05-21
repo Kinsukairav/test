@@ -1,3 +1,6 @@
+// Sentinel used to distinguish omitted vs. explicit null in Track.copyWith
+const _trackAbsent = Object();
+
 class Track {
   Track({
     required this.id,
@@ -48,7 +51,7 @@ class Track {
     String? title,
     String? artist,
     String? album,
-    String? albumArt,
+    Object? albumArt = _trackAbsent,
     Duration? duration,
     String? filePath,
     String? format,
@@ -62,7 +65,7 @@ class Track {
       title: title ?? this.title,
       artist: artist ?? this.artist,
       album: album ?? this.album,
-      albumArt: albumArt ?? this.albumArt,
+      albumArt: albumArt == _trackAbsent ? this.albumArt : albumArt as String?,
       duration: duration ?? this.duration,
       filePath: filePath ?? this.filePath,
       format: format ?? this.format,

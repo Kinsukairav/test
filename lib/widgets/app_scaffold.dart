@@ -4,6 +4,7 @@ import '../screens/home_screen.dart';
 import '../screens/search_screen.dart';
 import '../screens/queue_screen.dart';
 import '../screens/download_manager_screen.dart';
+import '../providers/audio_player_provider.dart';
 import '../providers/navigation_provider.dart';
 import 'left_side_panel.dart';
 import 'right_side_panel.dart';
@@ -14,6 +15,12 @@ class AppScaffold extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final activeIndex = ref.watch(activeScreenProvider);
+
+    // These watcher providers are lazy — they must be watched to activate.
+    // They forward position/duration/playing streams into their StateProviders.
+    ref.watch(positionWatcherProvider);
+    ref.watch(durationWatcherProvider);
+    ref.watch(playingWatcherProvider);
 
     return Scaffold(
       backgroundColor: Theme.of(context).colorScheme.surface,

@@ -5,13 +5,16 @@ import 'package:path/path.dart' as path;
 import '../models/track.dart';
 import '../models/playlist.dart';
 import '../models/search_result.dart';
+import 'cache_service.dart';
 
 class YouTubeService {
   static const String _invidousInstance = 'https://invidious.io';
   static const String _alternativeInstance = 'https://vid.puffyan.us';
-  List<String>? _cachedJsRuntimeArgs;
-  bool _checkedJsRuntime = false;
-  bool _warnedAboutJsRuntime = false;
+
+  // Static so the JS runtime check runs only once across all instances
+  static List<String>? _cachedJsRuntimeArgs;
+  static bool _checkedJsRuntime = false;
+  static bool _warnedAboutJsRuntime = false;
 
   Future<bool> _isCommandAvailable(String command, List<String> args) async {
     try {
@@ -31,11 +34,13 @@ class YouTubeService {
 
     if (await _isCommandAvailable('node', ['--version'])) {
       _cachedJsRuntimeArgs = const ['--js-runtimes', 'node'];
+      print('yt-dlp: using Node.js JS runtime');
       return _cachedJsRuntimeArgs!;
     }
 
     if (await _isCommandAvailable('deno', ['--version'])) {
       _cachedJsRuntimeArgs = const ['--js-runtimes', 'deno'];
+      print('yt-dlp: using Deno JS runtime');
       return _cachedJsRuntimeArgs!;
     }
 
@@ -45,13 +50,10 @@ class YouTubeService {
   }
 
   void _warnMissingJsRuntime() {
-    if (_warnedAboutJsRuntime) {
-      return;
-    }
-
+    if (_warnedAboutJsRuntime) return;
     _warnedAboutJsRuntime = true;
     print(
-        'Warning: No supported JavaScript runtime found for yt-dlp. Install Node.js or Deno and set --js-runtimes to avoid missing formats.');
+        'Warning: No supported JavaScript runtime found for yt-dlp. Install Node.js or Deno for better compatibility.');
   }
 
   Future<List<String>> _buildYtDlpArgs(List<String> args) async {
@@ -155,6 +157,28 @@ class YouTubeService {
   // Search videos using Invidious API (YouTube alternative frontend)
   Future<List<SearchResult>> searchVideos(String query,
       {int maxResults = 20}) async {
+    // ── Cache lookup ───────────────────────────────────────────────────────
+    final cacheKey = 'search_${query.trim().toLowerCase()}_$maxResults';
+    try {
+      final cached = await CacheService.instance.get(cacheKey);
+      if (cached != null && cached is List) {
+        return (cached)
+            .map((item) => SearchResult(
+                  id: item['id'],
+                  title: item['title'],
+                  artist: item['artist'],
+                  album: item['album'],
+                  duration: Duration(seconds: item['durationSeconds'] ?? 0),
+                  thumbnailUrl: item['thumbnailUrl'] ?? '',
+                  videoId: item['videoId'],
+                  viewCount: item['viewCount'] ?? 0,
+                  uploadDate: DateTime.tryParse(item['uploadDate'] ?? '') ??
+                      DateTime.now(),
+                ))
+            .toList();
+      }
+    } catch (_) {} // Cache miss — continue to network
+
     try {
       final encodedQuery = Uri.encodeComponent(query);
 
@@ -170,8 +194,10 @@ class YouTubeService {
 
         if (response.statusCode == 200) {
           final List<dynamic> data = json.decode(response.body);
-          return _parseSearchResults(data, maxResults,
+          final results = _parseSearchResults(data, maxResults,
               baseUrl: _invidousInstance);
+          await _cacheSearchResults(cacheKey, results);
+          return results;
         }
       } catch (e) {
         print('Primary Invidious instance failed: $e');
@@ -189,20 +215,48 @@ class YouTubeService {
 
         if (response.statusCode == 200) {
           final List<dynamic> data = json.decode(response.body);
-          return _parseSearchResults(data, maxResults,
+          final results = _parseSearchResults(data, maxResults,
               baseUrl: _alternativeInstance);
+          await _cacheSearchResults(cacheKey, results);
+          return results;
         }
       } catch (e) {
         print('Alternative Invidious instance failed: $e');
       }
 
       // If both Invidious instances fail, try yt-dlp search
-      return await _searchWithYtDlp(query, maxResults);
+      final results = await _searchWithYtDlp(query, maxResults);
+      await _cacheSearchResults(cacheKey, results);
+      return results;
     } catch (e) {
       print('Error searching YouTube: $e');
       throw Exception(
           'Failed to search YouTube: Network error or service unavailable');
     }
+  }
+
+  /// Serialises search results and stores them in cache.
+  Future<void> _cacheSearchResults(
+      String key, List<SearchResult> results) async {
+    try {
+      await CacheService.instance.put(
+        key,
+        results
+            .map((r) => {
+                  'id': r.id,
+                  'title': r.title,
+                  'artist': r.artist,
+                  'album': r.album,
+                  'durationSeconds': r.duration.inSeconds,
+                  'thumbnailUrl': r.thumbnailUrl,
+                  'videoId': r.videoId,
+                  'viewCount': r.viewCount,
+                  'uploadDate': r.uploadDate.toIso8601String(),
+                })
+            .toList(),
+        ttl: CacheService.searchTtl,
+      );
+    } catch (_) {} // Ignore cache write failures
   }
 
   // Parse search results from Invidious API
@@ -351,13 +405,21 @@ class YouTubeService {
     String outputPath, {
     Function(double)? onProgress,
     String quality = 'best',
+    // Original metadata from the search result — preserved throughout so the
+    // UI never shows generic 'Downloading...' / 'Unknown Artist' strings.
+    String? originalTitle,
+    String? originalArtist,
   }) async {
-    final downloadTask = DownloadTask(
+    // Use the caller-supplied title/artist as the baseline. We'll try to
+    // improve them via getVideoInfo, but we won't replace them with generic
+    // fallbacks if that call fails.
+    final baseTask = DownloadTask(
       id: videoId,
       url: 'https://www.youtube.com/watch?v=$videoId',
-      title: 'Downloading...',
-      artist: 'Unknown Artist',
-      status: DownloadStatus.pending,
+      title: originalTitle ?? 'Unknown Title',
+      artist: originalArtist ?? 'Unknown Artist',
+      status: DownloadStatus.downloading,
+      progress: 0.0,
       createdDate: DateTime.now(),
     );
 
@@ -369,20 +431,19 @@ class YouTubeService {
         }
       }
 
-      // Update status to downloading
-      final updatedTask = downloadTask.copyWith(
-        status: DownloadStatus.downloading,
-        progress: 0.0,
-      );
-
-      // Get video info first
+      // Try to enrich the title/artist from yt-dlp metadata.
+      // If getVideoInfo fails or returns null, we keep the original values.
       final videoInfo = await getVideoInfo(videoId);
-      final finalTask = videoInfo != null
-          ? updatedTask.copyWith(
-              title: videoInfo['title'] ?? 'Unknown Title',
-              artist: videoInfo['uploader'] ?? 'Unknown Artist',
+      final finalTask = (videoInfo != null)
+          ? baseTask.copyWith(
+              title: (videoInfo['title'] as String?)?.isNotEmpty == true
+                  ? videoInfo['title'] as String
+                  : baseTask.title,
+              artist: (videoInfo['uploader'] as String?)?.isNotEmpty == true
+                  ? videoInfo['uploader'] as String
+                  : baseTask.artist,
             )
-          : updatedTask;
+          : baseTask;
 
       // Ensure output directory exists
       final outputDir = Directory(outputPath);
@@ -394,44 +455,63 @@ class YouTubeService {
       final sanitizedTitle = _sanitizeFilename(finalTask.title);
       final outputFile = path.join(outputPath, '$sanitizedTitle.%(ext)s');
 
-      // Prepare yt-dlp command
+      // ── yt-dlp command ────────────────────────────────────────────────────
+      // --embed-thumbnail   : embeds the video thumbnail as MP3 cover art (APIC)
+      // --convert-thumbnails: JPEG is required for ID3v2 APIC frames
+      // --embed-metadata    : writes title, uploader, date, description, etc.
+      // --parse-metadata    : remap YouTube-specific fields to standard ID3 names
       final url = 'https://www.youtube.com/watch?v=$videoId';
       final args = await _buildYtDlpArgs([
         '--extract-audio',
-        '--audio-format',
-        'mp3',
-        '--audio-quality',
-        '0', // Best quality
+        '--audio-format', 'mp3',
+        '--audio-quality', '0',
         '--no-playlist',
-        '--output',
-        outputFile,
+        // Embed cover art (thumbnail) and all available YouTube metadata
+        '--embed-thumbnail',
+        '--convert-thumbnails', 'jpg',
+        '--embed-metadata',
+        // Map YouTube channel fields to standard ID3 artist tags
+        '--parse-metadata', r'%(uploader)s:%(artist)s',
+        '--parse-metadata', r'%(channel)s:%(album_artist)s',
+        // NOTE: %(upload_date>%Y)s is intentionally omitted — the > character
+        // is a shell redirect operator and breaks yt-dlp when runInShell=true.
+        // Year is already written by --embed-metadata from the video upload_date.
+        '--output', outputFile,
         '--newline',
         url,
       ]);
 
       print('Running command: yt-dlp ${args.join(' ')}');
 
-      // Run yt-dlp with progress tracking
-      final process = await Process.start('yt-dlp', args, runInShell: true);
+      // runInShell: false so shell operators (>, |, etc.) in track titles
+      // or yt-dlp format strings cannot be misinterpreted by the shell.
+      final process = await Process.start('yt-dlp', args, runInShell: false);
 
       final outputBuffer = StringBuffer();
       double currentProgress = 0.0;
 
-      process.stdout.transform(utf8.decoder).listen((data) {
-        outputBuffer.write(data);
-        print('yt-dlp output: $data');
+      // allowMalformed: true prevents FormatException crashes when yt-dlp
+      // outputs non-UTF-8 bytes (e.g. special characters in song titles).
+      process.stdout
+          .transform(const Utf8Codec(allowMalformed: true).decoder)
+          .transform(const LineSplitter())
+          .listen((line) {
+        outputBuffer.writeln(line);
+        print('yt-dlp: $line');
 
-        // Parse progress from yt-dlp output
+        // Parse progress percentage from yt-dlp output
         final progressMatch =
-            RegExp(r'\[download\]\s+(\d+\.?\d*)%').firstMatch(data);
+            RegExp(r'\[download\]\s+(\d+\.?\d*)%').firstMatch(line);
         if (progressMatch != null) {
           currentProgress = double.parse(progressMatch.group(1)!) / 100.0;
           onProgress?.call(currentProgress);
         }
       });
 
-      process.stderr.transform(utf8.decoder).listen((data) {
-        print('yt-dlp error: $data');
+      process.stderr
+          .transform(const Utf8Codec(allowMalformed: true).decoder)
+          .listen((data) {
+        print('yt-dlp stderr: $data');
       });
 
       final exitCode = await process.exitCode;
@@ -439,23 +519,43 @@ class YouTubeService {
       if (exitCode == 0) {
         // Find the downloaded file
         final files = await outputDir.list().toList();
-        final downloadedFile = files.firstWhere(
-          (file) =>
-              file.path.contains(sanitizedTitle) && file.path.endsWith('.mp3'),
-          orElse: () => files.first,
-        );
+        String? downloadedFilePath;
+        try {
+          final matched = files.firstWhere(
+            (f) => f.path.contains(sanitizedTitle) && f.path.endsWith('.mp3'),
+          );
+          downloadedFilePath = matched.path;
+        } catch (_) {
+          final mp3Files = files.where((f) => f.path.endsWith('.mp3')).toList();
+          if (mp3Files.isNotEmpty) downloadedFilePath = mp3Files.last.path;
+        }
 
-        return downloadTask.copyWith(
+        // MusicBrainz enrichment (best-effort, non-blocking).
+        // Queries for genre, canonical artist, album, year.
+        // Patches them into the MP3 via ffmpeg stream-copy (no re-encode).
+        // Failures here are non-fatal — the download is still returned.
+        if (downloadedFilePath != null) {
+          print('Enriching ID3 tags from MusicBrainz...');
+          final mbData = await _enrichMetadataFromMusicBrainz(
+              finalTask.title, finalTask.artist);
+          if (mbData.isNotEmpty) {
+            await _patchId3TagsWithFfmpeg(downloadedFilePath, mbData);
+          } else {
+            print('No MusicBrainz match -- keeping yt-dlp tags only');
+          }
+        }
+
+        return finalTask.copyWith(
           status: DownloadStatus.completed,
           progress: 1.0,
-          filePath: downloadedFile.path,
+          filePath: downloadedFilePath,
         );
       } else {
         throw Exception('yt-dlp failed with exit code: $exitCode');
       }
     } catch (e) {
       print('Download error: $e');
-      return downloadTask.copyWith(
+      return baseTask.copyWith(
         status: DownloadStatus.failed,
         progress: 0.0,
       );
@@ -465,6 +565,15 @@ class YouTubeService {
   // Get stream URL for direct playback (without downloading)
   Future<String?> getStreamUrl(String videoId,
       {String quality = 'best'}) async {
+    // ── Cache lookup (stream URLs expire in 30 min) ───────────────────────
+    final cacheKey = 'stream_url_$videoId';
+    try {
+      final cached = await CacheService.instance.get(cacheKey);
+      if (cached != null && cached is String && cached.isNotEmpty) {
+        return cached;
+      }
+    } catch (_) {}
+
     try {
       if (!await isYtDlpInstalled()) {
         if (!await installYtDlp()) {
@@ -478,7 +587,14 @@ class YouTubeService {
 
       if (result.exitCode == 0) {
         final streamUrl = result.stdout.toString().trim();
-        return streamUrl.isNotEmpty ? streamUrl : null;
+        if (streamUrl.isNotEmpty) {
+          await CacheService.instance.put(
+            cacheKey,
+            streamUrl,
+            ttl: CacheService.streamUrlTtl,
+          );
+          return streamUrl;
+        }
       }
 
       return null;
@@ -508,22 +624,22 @@ class YouTubeService {
     );
   }
 
-  // Get default download path
+  // Get default download path — always uses music_app_downloads folder
   Future<String> getDefaultDownloadPath() async {
     try {
       if (Platform.isWindows) {
         final userProfile = Platform.environment['USERPROFILE'];
         return path.join(
-            userProfile ?? 'C:\\Users\\Default', 'Music', 'YouTube Downloads');
+            userProfile ?? 'C:\\Users\\Default', 'Music', 'music_app_downloads');
       } else {
         final home = Platform.environment['HOME'];
-        return path.join(home ?? '/tmp', 'Music', 'YouTube Downloads');
+        return path.join(home ?? '/tmp', 'Music', 'music_app_downloads');
       }
     } catch (e) {
       print('Error getting download path: $e');
       return Platform.isWindows
-          ? 'C:\\Users\\Music\\YouTube Downloads'
-          : '/tmp/music_downloads';
+          ? 'C:\\Users\\Music\\music_app_downloads'
+          : '/tmp/music_app_downloads';
     }
   }
 
@@ -537,6 +653,28 @@ class YouTubeService {
 
   // Get YouTube trending music
   Future<List<SearchResult>> getTrendingMusic({int maxResults = 10}) async {
+    // ── Cache lookup (6h TTL) ─────────────────────────────────────────────
+    const cacheKey = 'trending_music';
+    try {
+      final cached = await CacheService.instance.get(cacheKey);
+      if (cached != null && cached is List) {
+        return (cached)
+            .map((item) => SearchResult(
+                  id: item['id'],
+                  title: item['title'],
+                  artist: item['artist'],
+                  album: item['album'],
+                  duration: Duration(seconds: item['durationSeconds'] ?? 0),
+                  thumbnailUrl: item['thumbnailUrl'] ?? '',
+                  videoId: item['videoId'],
+                  viewCount: item['viewCount'] ?? 0,
+                  uploadDate: DateTime.tryParse(item['uploadDate'] ?? '') ??
+                      DateTime.now(),
+                ))
+            .toList();
+      }
+    } catch (_) {}
+
     try {
       print('Fetching trending music...');
 
@@ -560,7 +698,9 @@ class YouTubeService {
       }
 
       if (latestResults.isNotEmpty) {
-        return latestResults.take(maxResults).toList();
+        final finalResults = latestResults.take(maxResults).toList();
+        await _cacheSearchResults(cacheKey, finalResults);
+        return finalResults;
       }
 
       // Try Invidious API for trending
@@ -570,13 +710,14 @@ class YouTubeService {
         final response = await http.get(
           Uri.parse(url),
           headers: {'User-Agent': 'MusicPlayer/1.0'},
-        ).timeout(Duration(seconds: 10));
+        ).timeout(const Duration(seconds: 10));
 
         if (response.statusCode == 200) {
           final List<dynamic> data = json.decode(response.body);
           final results =
               _parseSearchResults(data, maxResults, baseUrl: _invidousInstance);
           print('Found ${results.length} trending tracks via Invidious');
+          await _cacheSearchResults(cacheKey, results);
           return results;
         }
       } catch (e) {
@@ -589,13 +730,14 @@ class YouTubeService {
         final response = await http.get(
           Uri.parse(fallbackUrl),
           headers: {'User-Agent': 'MusicPlayer/1.0'},
-        ).timeout(Duration(seconds: 10));
+        ).timeout(const Duration(seconds: 10));
 
         if (response.statusCode == 200) {
           final List<dynamic> data = json.decode(response.body);
           final results = _parseSearchResults(data, maxResults,
               baseUrl: _alternativeInstance);
           print('Found ${results.length} trending tracks via fallback');
+          await _cacheSearchResults(cacheKey, results);
           return results;
         }
       } catch (e) {
@@ -603,54 +745,78 @@ class YouTubeService {
       }
 
       // Fallback to yt-dlp search for popular music
-      return await _getTrendingWithYtDlp(maxResults);
+      final results = await _getTrendingWithYtDlp(maxResults);
+      await _cacheSearchResults(cacheKey, results);
+      return results;
     } catch (e) {
       print('Error getting trending music: $e');
       return [];
     }
   }
 
-  // Get YouTube playlist contents with pagination support
+  // Get ALL tracks in a YouTube playlist (no artificial page limit)
   Future<List<SearchResult>> getPlaylistContents(String playlistId,
-      {int maxResults = 50, int offset = 0}) async {
+      {int maxResults = 0, int offset = 0}) async {
+    // ── Cache lookup ───────────────────────────────────────────────────────────
+    // Key is per-playlist only so the full result is shared regardless of
+    // how many results the caller requested.
+    final cacheKey = 'playlist_all_$playlistId';
     try {
-      print(
-          'Fetching playlist contents for: $playlistId (offset: $offset, max: $maxResults)');
+      final cached = await CacheService.instance.get(cacheKey);
+      if (cached != null && cached is List) {
+        final all = (cached)
+            .map((item) => SearchResult(
+                  id: item['id'],
+                  title: item['title'],
+                  artist: item['artist'],
+                  album: item['album'],
+                  duration: Duration(seconds: item['durationSeconds'] ?? 0),
+                  thumbnailUrl: item['thumbnailUrl'] ?? '',
+                  videoId: item['videoId'],
+                  viewCount: item['viewCount'] ?? 0,
+                  uploadDate: DateTime.tryParse(item['uploadDate'] ?? '') ??
+                      DateTime.now(),
+                ))
+            .toList();
+        print('Playlist cache hit: ${all.length} tracks for $playlistId');
+        return all;
+      }
+    } catch (_) {}
 
-      // Try Invidious API for playlist
+    try {
+      print('Fetching ALL playlist contents for: $playlistId');
+
+      // ── Try Invidious API ──────────────────────────────────────────────
+      // Invidious returns every video in the playlist inside a single JSON
+      // response (the `videos` array). No pagination needed server-side.
       final url = '$_invidousInstance/api/v1/playlists/$playlistId';
-
       try {
         final response = await http.get(
           Uri.parse(url),
           headers: {'User-Agent': 'MusicPlayer/1.0'},
-        ).timeout(Duration(seconds: 15));
+        ).timeout(const Duration(seconds: 20));
 
         if (response.statusCode == 200) {
           final Map<String, dynamic> data = json.decode(response.body);
           final List<dynamic> videos = data['videos'] ?? [];
 
-          // Apply offset and maxResults for pagination
-          final startIndex = offset;
-          final endIndex = (startIndex + maxResults).clamp(0, videos.length);
-
-          if (startIndex >= videos.length) {
-            return []; // No more results
+          if (videos.isNotEmpty) {
+            // Return ALL videos — no slicing
+            final results =
+                _parseSearchResults(videos, videos.length, baseUrl: _invidousInstance);
+            print('Found ${results.length} tracks in playlist via Invidious');
+            await _cacheSearchResults(cacheKey, results);
+            return results;
           }
-
-          final paginatedVideos = videos.sublist(startIndex, endIndex);
-          final results = _parseSearchResults(paginatedVideos, maxResults,
-              baseUrl: _invidousInstance);
-          print(
-              'Found ${results.length} tracks in playlist via Invidious (page: ${offset ~/ maxResults + 1})');
-          return results;
         }
       } catch (e) {
         print('Invidious playlist fetch failed: $e');
       }
 
-      // Fallback to yt-dlp for playlist
-      return await _getPlaylistWithYtDlp(playlistId, maxResults, offset);
+      // ── Fallback to yt-dlp (fetches everything in one --flat-playlist call) ───
+      final results = await _getPlaylistWithYtDlp(playlistId);
+      await _cacheSearchResults(cacheKey, results);
+      return results;
     } catch (e) {
       print('Error getting playlist contents: $e');
       return [];
@@ -659,6 +825,8 @@ class YouTubeService {
 
   // Extract playlist ID from YouTube URL
   String? extractPlaylistId(String url) {
+    final trimmed = url.trim();
+
     // Match various YouTube playlist URL formats
     final patterns = [
       r'[?&]list=([a-zA-Z0-9_-]+)',
@@ -667,11 +835,20 @@ class YouTubeService {
     ];
 
     for (final pattern in patterns) {
-      final match = RegExp(pattern).firstMatch(url);
+      final match = RegExp(pattern).firstMatch(trimmed);
       if (match != null) {
         return match.group(1);
       }
     }
+
+    // Fallback: if the input itself looks like a bare playlist ID
+    // (e.g. PL..., OLAK..., RD..., FL..., or any 20+ char alphanumeric
+    // string the user pasted directly), return it as-is.
+    final bareIdPattern = RegExp(r'^[a-zA-Z0-9_-]{10,}$');
+    if (bareIdPattern.hasMatch(trimmed)) {
+      return trimmed;
+    }
+
     return null;
   }
 
@@ -800,11 +977,11 @@ class YouTubeService {
     }
   }
 
-  Future<List<SearchResult>> _getPlaylistWithYtDlp(
-      String playlistId, int maxResults,
-      [int offset = 0]) async {
+  // Fetches ALL tracks from a playlist using yt-dlp --flat-playlist.
+  // Returns every track in one go — no artificial page limit.
+  Future<List<SearchResult>> _getPlaylistWithYtDlp(String playlistId) async {
     try {
-      print('Fetching playlist with yt-dlp: $playlistId (offset: $offset)');
+      print('Fetching ALL playlist tracks with yt-dlp: $playlistId');
 
       final result = await _runYtDlp([
         '--dump-json',
@@ -812,12 +989,12 @@ class YouTubeService {
         'https://www.youtube.com/playlist?list=$playlistId',
       ]);
 
-      final List<SearchResult> tracks = [];
       if (result.exitCode != 0) {
         print('yt-dlp playlist fetch failed: ${result.stderr}');
         return [];
       }
 
+      final List<SearchResult> tracks = [];
       final output = result.stdout.toString();
 
       for (final line in output.split('\n')) {
@@ -826,41 +1003,31 @@ class YouTubeService {
         try {
           final data = json.decode(line.trim());
           final videoId = data['id'] ?? '';
-          final rawThumbnail = (data['thumbnails'] as List?)?.isNotEmpty == true
-              ? data['thumbnails'][0]['url'] ?? ''
-              : '';
-          final searchResult = SearchResult(
+          final rawThumbnail =
+              (data['thumbnails'] as List?)?.isNotEmpty == true
+                  ? data['thumbnails'][0]['url'] ?? ''
+                  : '';
+          tracks.add(SearchResult(
             id: videoId,
             title: data['title'] ?? 'Unknown Title',
             artist: data['uploader'] ?? 'Unknown Artist',
             album: null,
-            duration: Duration(seconds: (data['duration'] ?? 0).toInt()),
+            duration:
+                Duration(seconds: (data['duration'] ?? 0).toInt()),
             thumbnailUrl:
                 _normalizeThumbnailUrl(rawThumbnail, videoId: videoId),
             videoId: videoId,
             viewCount: data['view_count'] ?? 0,
             uploadDate: DateTime.now(),
-          );
-
-          tracks.add(searchResult);
+          ));
         } catch (e) {
           print('Error parsing playlist track data: $e');
           continue;
         }
       }
 
-      // Apply pagination
-      final startIndex = offset;
-      final endIndex = (startIndex + maxResults).clamp(0, tracks.length);
-
-      if (startIndex >= tracks.length) {
-        return []; // No more results
-      }
-
-      final paginatedTracks = tracks.sublist(startIndex, endIndex);
-      print(
-          'Extracted ${paginatedTracks.length} tracks from playlist (total: ${tracks.length}, page: ${offset ~/ maxResults + 1})');
-      return paginatedTracks;
+      print('Extracted ${tracks.length} tracks from playlist $playlistId');
+      return tracks;
     } catch (e) {
       print('Error getting playlist with yt-dlp: $e');
       return [];
@@ -869,9 +1036,158 @@ class YouTubeService {
 
   // Alias for getPlaylistContents with better naming
   Future<List<SearchResult>> getPlaylistTracks(String playlistId,
-      {int maxResults = 50, int offset = 0}) async {
-    return await getPlaylistContents(playlistId,
-        maxResults: maxResults, offset: offset);
+      {int maxResults = 0, int offset = 0}) async {
+    return getPlaylistContents(playlistId);
+  }
+
+  // ── MusicBrainz metadata enrichment ─────────────────────────────────────
+  // Queries the free MusicBrainz API (no key needed) for genre, proper album
+  // name, precise artist credit, and release year.
+  Future<Map<String, String>> _enrichMetadataFromMusicBrainz(
+      String title, String artist) async {
+    try {
+      // Strip featured artist suffixes and brackets for a cleaner search
+      final cleanTitle = title
+          .replaceAll(RegExp(r'\(feat\..*?\)', caseSensitive: false), '')
+          .replaceAll(RegExp(r'\[.*?\]'), '')
+          .replaceAll(RegExp(r'\s{2,}'), ' ')
+          .trim();
+      // Use only the primary artist (before any comma / ampersand)
+      final cleanArtist =
+          artist.split(RegExp(r'[,&]')).first.trim();
+
+      final query = Uri.encodeQueryComponent(
+          'recording:"$cleanTitle" AND artistname:"$cleanArtist"');
+      final uri = Uri.parse(
+          'https://musicbrainz.org/ws/2/recording?query=$query'
+          '&fmt=json&limit=1&inc=tags+releases+artist-credits');
+
+      final response = await http.get(uri, headers: {
+        'User-Agent': 'MusicPlayerApp/1.0 (music-app-flutter)',
+        'Accept':     'application/json',
+      }).timeout(const Duration(seconds: 12));
+
+      if (response.statusCode != 200) return {};
+
+      final data = json.decode(
+          const Utf8Codec(allowMalformed: true).decode(response.bodyBytes));
+      final recordings = data['recordings'] as List?;
+      if (recordings == null || recordings.isEmpty) return {};
+
+      final rec = recordings.first as Map<String, dynamic>;
+      final enriched = <String, String>{};
+
+      // ── Title (MusicBrainz canonical spelling) ───────────────────────────
+      final mbTitle = rec['title'] as String?;
+      if (mbTitle != null && mbTitle.isNotEmpty) enriched['title'] = mbTitle;
+
+      // ── Artist credit (handles collaborations correctly) ─────────────────
+      final credits = rec['artist-credit'] as List?;
+      if (credits != null && credits.isNotEmpty) {
+        final artistStr = credits.map<String>((c) {
+          final a    = (c['artist'] as Map?)?['name'] as String? ?? '';
+          final join = (c['joinphrase'] as String?) ?? '';
+          return '$a$join';
+        }).join().trim();
+        if (artistStr.isNotEmpty) enriched['artist'] = artistStr;
+      }
+
+      // ── Album + year from the first listed release ───────────────────────
+      final releases = rec['releases'] as List?;
+      if (releases != null && releases.isNotEmpty) {
+        final rel = releases.first as Map<String, dynamic>;
+
+        final album = rel['title'] as String?;
+        if (album != null && album.isNotEmpty) enriched['album'] = album;
+
+        final releaseDate = rel['date'] as String?;
+        if (releaseDate != null && releaseDate.length >= 4) {
+          enriched['date'] = releaseDate.substring(0, 4); // Year only
+        }
+
+        // Release type badge stored as comment (Album / Single / EP)
+        final rg = rel['release-group'] as Map?;
+        final type = rg?['primary-type'] as String?;
+        if (type != null && type.isNotEmpty) {
+          enriched['comment'] = type;
+        }
+      }
+
+      // ── Genre from crowd-sourced tags (highest vote count first) ─────────
+      final tags = rec['tags'] as List?;
+      if (tags != null && tags.isNotEmpty) {
+        final sorted = List<Map<String, dynamic>>.from(
+            tags.cast<Map<String, dynamic>>())
+          ..sort((a, b) =>
+              ((b['count'] ?? 0) as int).compareTo((a['count'] ?? 0) as int));
+        final genre = sorted
+            .take(3)
+            .map((t) => (t['name'] as String? ?? '').trim())
+            .where((t) => t.isNotEmpty)
+            .map((t) => t[0].toUpperCase() + t.substring(1))
+            .join('; ');
+        if (genre.isNotEmpty) enriched['genre'] = genre;
+      }
+
+      if (enriched.isNotEmpty) {
+        print('MusicBrainz enrichment: ${enriched.keys.join(', ')} for "$cleanTitle"');
+      }
+      return enriched;
+    } catch (e) {
+      print('MusicBrainz lookup failed (non-critical): $e');
+      return {};
+    }
+  }
+
+  // ── ffmpeg ID3 tag patcher ────────────────────────────────────────────────
+  // Uses ffmpeg stream-copy to add/override specific ID3 tags without
+  // re-encoding the audio. Existing tags (including cover art added by
+  // yt-dlp's --embed-thumbnail) are preserved via -map_metadata 0.
+  Future<void> _patchId3TagsWithFfmpeg(
+      String mp3Path, Map<String, String> metadata) async {
+    if (metadata.isEmpty) return;
+
+    final dir      = path.dirname(mp3Path);
+    final base     = path.basenameWithoutExtension(mp3Path);
+    final tempPath = path.join(dir, '${base}_id3tmp.mp3');
+
+    try {
+      // Build -metadata key=value pairs for every non-empty field
+      final metaArgs = metadata.entries
+          .where((e) => e.value.isNotEmpty)
+          .expand<String>((e) => ['-metadata', '${e.key}=${e.value}'])
+          .toList();
+
+      final ffmpegArgs = [
+        '-i',          mp3Path,
+        '-map',        '0',          // copy ALL streams (audio + embedded cover)
+        '-map_metadata', '0',        // preserve all existing tags
+        '-id3v2_version', '3',       // ID3v2.3 – broadest player compatibility
+        ...metaArgs,
+        '-codec',      'copy',       // no re-encode
+        '-y',                        // overwrite temp
+        tempPath,
+      ];
+
+      print('Patching ID3 tags via ffmpeg: ${metadata.keys.join(', ')}');
+      final result =
+          await Process.run('ffmpeg', ffmpegArgs, runInShell: true);
+
+      if (result.exitCode == 0) {
+        // Atomically replace original with enriched copy
+        await File(mp3Path).delete();
+        await File(tempPath).rename(mp3Path);
+        print('ID3 tags patched successfully');
+      } else {
+        print('ffmpeg ID3 patch failed (non-critical): ${result.stderr}');
+        final tmp = File(tempPath);
+        if (await tmp.exists()) await tmp.delete();
+      }
+    } catch (e) {
+      print('Error patching ID3 tags (non-critical): $e');
+      final tmp = File(tempPath);
+      if (await tmp.exists()) await tmp.delete();
+    }
   }
 
   void dispose() {

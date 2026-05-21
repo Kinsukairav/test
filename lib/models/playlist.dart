@@ -54,6 +54,9 @@ class Playlist {
   }
 }
 
+// Sentinel used to distinguish omitted vs. explicit null in DownloadTask.copyWith
+const _downloadAbsent = Object();
+
 class DownloadTask {
   DownloadTask({
     required this.id,
@@ -84,7 +87,7 @@ class DownloadTask {
     DownloadStatus? status,
     double? progress,
     String? filePath,
-    String? error,
+    Object? error = _downloadAbsent,
     DateTime? createdDate,
   }) {
     return DownloadTask(
@@ -95,7 +98,7 @@ class DownloadTask {
       status: status ?? this.status,
       progress: progress ?? this.progress,
       filePath: filePath ?? this.filePath,
-      error: error ?? this.error,
+      error: error == _downloadAbsent ? this.error : error as String?,
       createdDate: createdDate ?? this.createdDate,
     );
   }

@@ -6,7 +6,6 @@ import '../models/playlist.dart';
 import '../services/youtube_service.dart';
 import '../providers/download_manager_provider.dart';
 import '../providers/audio_player_provider.dart';
-import '../providers/navigation_provider.dart';
 
 class SearchScreen extends ConsumerStatefulWidget {
   const SearchScreen({super.key});
@@ -29,10 +28,9 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         title: const Text('Search Music'),
         backgroundColor: Theme.of(context).colorScheme.surface,
         elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: _handleBack,
-        ),
+        // No back button — SearchScreen is displayed inline in the layout,
+        // not pushed onto the Navigator stack.
+        automaticallyImplyLeading: false,
       ),
       body: Column(
         children: [
@@ -252,16 +250,6 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           _isLoading = false;
         });
 
-        // Show success message if results found
-        if (results.isNotEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Found ${results.length} results for "$query"'),
-              backgroundColor: Colors.green,
-              duration: const Duration(seconds: 2),
-            ),
-          );
-        }
       }
     } catch (e) {
       print('Search error: $e');
@@ -271,124 +259,36 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           _isLoading = false;
         });
 
-        // Show detailed error message
-        final errorMessage = e.toString().contains('Exception: ')
-            ? e.toString().replaceFirst('Exception: ', '')
-            : 'Search failed: ${e.toString()}';
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Search Failed',
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 4),
-                Text(errorMessage),
-                const SizedBox(height: 8),
-                const Text(
-                  'Please check your internet connection or try again later.',
-                  style: TextStyle(fontSize: 12),
-                ),
-              ],
-            ),
-            backgroundColor: Theme.of(context).colorScheme.error,
-            duration: const Duration(seconds: 5),
-            action: SnackBarAction(
-              label: 'Retry',
-              textColor: Colors.white,
-              onPressed: () => _performSearch(query),
-            ),
-          ),
-        );
       }
     }
   }
 
   void _playTrack(SearchResult result) async {
+    // Find the index of the tapped result in the current results list.
+    final index = _searchResults.indexOf(result);
+
+    // Set ALL current search results as the queue so prev/next buttons work.
+    if (_searchResults.isNotEmpty) {
+      final trackList =
+          _searchResults.map((r) => r.toTrack()).toList();
+      ref.read(queueProvider.notifier).state = trackList;
+      ref.read(currentTrackIndexProvider.notifier).state =
+          index >= 0 ? index : 0;
+    }
+
     try {
       final audioController = ref.read(audioPlayerControllerProvider.notifier);
-
-      // Show loading notification
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Row(
-            children: [
-              const SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-              const SizedBox(width: 12),
-              Text('Loading: ${result.title}'),
-            ],
-          ),
-        ),
-      );
-
-      // Start streaming the track
       await audioController.playFromSearchResult(result);
-
-      // Show success message
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Now playing: ${result.title} by ${result.artist}'),
-            action: SnackBarAction(
-              label: 'OK',
-              onPressed: () =>
-                  ScaffoldMessenger.of(context).hideCurrentSnackBar(),
-            ),
-          ),
-        );
-      }
     } catch (e) {
-      // Show error message
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to play: ${e.toString()}'),
-            backgroundColor: Colors.red,
-            action: SnackBarAction(
-              label: 'Retry',
-              onPressed: () => _playTrack(result),
-            ),
-          ),
-        );
-      }
+      print('Failed to play: $e');
     }
   }
 
   void _downloadTrack(SearchResult result) {
     final downloadManager = ref.read(downloadManagerProvider.notifier);
 
-    // Check if already downloaded or downloading
-    if (downloadManager.isVideoDownloaded(result.videoId)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('This track is already downloaded or downloading'),
-        ),
-      );
-      return;
-    }
-
-    // Add to download queue
+    if (downloadManager.isVideoDownloaded(result.videoId)) return;
     downloadManager.addDownload(result);
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Added "${result.title}" to download queue'),
-        action: SnackBarAction(
-          label: 'View Downloads',
-          onPressed: () {
-            ref.read(activeScreenProvider.notifier).state = 3;
-          },
-        ),
-      ),
-    );
   }
 
   Future<void> _showPlaylistLinkDialog() async {
@@ -406,6 +306,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     } catch (e) {
       // Clipboard access might fail, ignore
     }
+    // After await, check if widget is still mounted before using context
+    if (!mounted) return;
 
     return showDialog<void>(
       context: context,
@@ -485,17 +387,12 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   }
 
   Future<void> _importPlaylistFromLink(String input) async {
-    if (input.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please enter a playlist URL or ID'),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
+    if (input.isEmpty) return;
 
     setState(() => _isImportingPlaylist = true);
+
+    // We need to capture the dialog's own context so we can close it precisely.
+    BuildContext? loadingDialogContext;
 
     try {
       // Extract playlist ID from URL or use as-is if it's already an ID
@@ -504,33 +401,40 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
         throw Exception('Invalid playlist URL or ID format');
       }
 
-      // Show loading dialog
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => AlertDialog(
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const CircularProgressIndicator(),
-              const SizedBox(height: 16),
-              const Text('Fetching playlist contents...'),
-              const SizedBox(height: 8),
-              Text(
-                'Playlist ID: $playlistId',
-                style: const TextStyle(fontSize: 12, color: Colors.grey),
+      // Show loading dialog and capture its context
+      if (mounted) {
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) {
+            loadingDialogContext = dialogContext;
+            return AlertDialog(
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const CircularProgressIndicator(),
+                  const SizedBox(height: 16),
+                  const Text('Fetching playlist contents...'),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Playlist ID: $playlistId',
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ],
               ),
-            ],
-          ),
-        ),
-      );
+            );
+          },
+        );
+      }
 
       // Get playlist contents
       final tracks = await _youtubeService.getPlaylistContents(playlistId);
 
-      // Close loading dialog
-      if (mounted) {
-        Navigator.of(context).pop();
+      // Close loading dialog using the captured context
+      if (loadingDialogContext != null &&
+          loadingDialogContext!.mounted) {
+        Navigator.of(loadingDialogContext!).pop();
+        loadingDialogContext = null;
       }
 
       if (tracks.isEmpty) {
@@ -540,34 +444,17 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       // Show playlist contents in a bottom sheet
       if (mounted) {
         _showPlaylistContents(tracks, playlistId);
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Found ${tracks.length} tracks in playlist!'),
-            backgroundColor: Colors.green,
-          ),
-        );
       }
     } catch (e) {
       print('Error importing playlist: $e');
 
       // Close loading dialog if still open
-      if (mounted && Navigator.of(context).canPop()) {
-        Navigator.of(context).pop();
+      if (loadingDialogContext != null && loadingDialogContext!.mounted) {
+        Navigator.of(loadingDialogContext!).pop();
+        loadingDialogContext = null;
       }
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to import playlist: ${e.toString()}'),
-            backgroundColor: Colors.red,
-            action: SnackBarAction(
-              label: 'Retry',
-              onPressed: () => _importPlaylistFromLink(input),
-            ),
-          ),
-        );
-      }
+      print('Failed to import playlist: $e');
     } finally {
       if (mounted) {
         setState(() => _isImportingPlaylist = false);
@@ -579,11 +466,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      builder: (context) => DraggableScrollableSheet(
+      builder: (sheetContext) => DraggableScrollableSheet(
         initialChildSize: 0.7,
         maxChildSize: 0.9,
         minChildSize: 0.5,
-        builder: (context, scrollController) {
+        builder: (sheetInnerContext, scrollController) {
           return Container(
             padding: const EdgeInsets.all(16),
             child: Column(
@@ -608,7 +495,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                     Icon(
                       Icons.playlist_play,
                       size: 32,
-                      color: Theme.of(context).colorScheme.primary,
+                      color: Theme.of(sheetContext).colorScheme.primary,
                     ),
                     const SizedBox(width: 12),
                     Expanded(
@@ -617,7 +504,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                         children: [
                           Text(
                             'YouTube Playlist',
-                            style: Theme.of(context)
+                            style: Theme.of(sheetContext)
                                 .textTheme
                                 .titleLarge
                                 ?.copyWith(
@@ -626,11 +513,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                           ),
                           Text(
                             '${tracks.length} tracks • ID: $playlistId',
-                            style: Theme.of(context)
+                            style: Theme.of(sheetContext)
                                 .textTheme
                                 .bodyMedium
                                 ?.copyWith(
-                                  color: Theme.of(context)
+                                  color: Theme.of(sheetContext)
                                       .colorScheme
                                       .onSurface
                                       .withValues(alpha: 0.7),
@@ -640,7 +527,9 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                       ),
                     ),
                     ElevatedButton(
-                      onPressed: () => _playAllTracks(tracks),
+                      // Use sheetContext so Navigator.pop closes the sheet
+                      onPressed: () =>
+                          _playAllTracks(tracks, sheetContext),
                       child: const Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -652,7 +541,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                     ),
                     const SizedBox(width: 8),
                     OutlinedButton(
-                      onPressed: () => _savePlaylist(tracks, playlistId),
+                      onPressed: () =>
+                          _savePlaylist(tracks, playlistId, sheetContext),
                       child: const Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -691,7 +581,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     );
   }
 
-  Future<void> _playAllTracks(List<SearchResult> tracks) async {
+  Future<void> _playAllTracks(
+      List<SearchResult> tracks, BuildContext sheetContext) async {
     if (tracks.isEmpty) return;
 
     try {
@@ -703,33 +594,17 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       // Play playlist (sets queue and starts playing)
       await audioController.playPlaylist(trackList);
 
-      if (mounted) {
-        Navigator.of(context).pop(); // Close the bottom sheet
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Playing ${tracks.length} tracks from playlist'),
-            action: SnackBarAction(
-              label: 'OK',
-              onPressed: () =>
-                  ScaffoldMessenger.of(context).hideCurrentSnackBar(),
-            ),
-          ),
-        );
-      }
+      // Close the bottom sheet using the sheet's own context
+      if (sheetContext.mounted) Navigator.of(sheetContext).pop();
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to play playlist: ${e.toString()}'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      print('Failed to play playlist: $e');
     }
   }
 
   Future<void> _savePlaylist(
-      List<SearchResult> tracks, String playlistId) async {
+      List<SearchResult> tracks,
+      String playlistId,
+      BuildContext sheetContext) async {
     if (tracks.isEmpty) return;
 
     try {
@@ -752,30 +627,10 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       // Save to provider
       ref.read(savedPlaylistsProvider.notifier).addPlaylist(playlist);
 
-      if (mounted) {
-        Navigator.of(context).pop(); // Close the bottom sheet
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-                'Playlist "$playlistName" saved with ${tracks.length} tracks'),
-            action: SnackBarAction(
-              label: 'View Playlists',
-              onPressed: () {
-                ref.read(activeScreenProvider.notifier).state = 0;
-              },
-            ),
-          ),
-        );
-      }
+      // Close the bottom sheet using the sheet's own context
+      if (sheetContext.mounted) Navigator.of(sheetContext).pop();
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to save playlist: ${e.toString()}'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      print('Failed to save playlist: $e');
     }
   }
 
@@ -821,16 +676,6 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   void dispose() {
     _searchController.dispose();
     super.dispose();
-  }
-
-  void _handleBack() {
-    final navigator = Navigator.of(context);
-    if (navigator.canPop()) {
-      navigator.pop();
-      return;
-    }
-
-    ref.read(activeScreenProvider.notifier).state = 0;
   }
 }
 

@@ -46,44 +46,57 @@ class LeftSidePanel extends ConsumerWidget {
               ),
               child: Column(
                 children: [
-                  // Cover Art
+                  // Cover Art — fills top of card, clipped to rounded corners
                   Expanded(
-                    child: Container(
-                      width: double.infinity,
-                      decoration: BoxDecoration(
-                        borderRadius: const BorderRadius.vertical(
-                            top: Radius.circular(16)),
-                        color: Theme.of(context).colorScheme.primaryContainer,
-                      ),
-                      child: currentTrack?.albumArt != null
-                          ? ClipRRect(
-                              borderRadius: const BorderRadius.vertical(
-                                  top: Radius.circular(16)),
-                              child: Image.network(
-                                currentTrack!.albumArt!,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, __, ___) => Center(
-                                  child: Icon(
-                                    Icons.music_note_rounded,
-                                    size: 64,
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        return ClipRRect(
+                          borderRadius: const BorderRadius.vertical(
+                              top: Radius.circular(16)),
+                          child: SizedBox(
+                            width: constraints.maxWidth,
+                            height: constraints.maxHeight,
+                            child: currentTrack?.albumArt != null
+                                ? Image.network(
+                                    currentTrack!.albumArt!,
+                                    fit: BoxFit.cover,
+                                    width: constraints.maxWidth,
+                                    height: constraints.maxHeight,
+                                    alignment: Alignment.center,
+                                    errorBuilder: (_, __, ___) => Container(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .primaryContainer,
+                                      child: Center(
+                                        child: Icon(
+                                          Icons.music_note_rounded,
+                                          size: 64,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onPrimaryContainer
+                                              .withValues(alpha: 0.5),
+                                        ),
+                                      ),
+                                    ),
+                                  )
+                                : Container(
                                     color: Theme.of(context)
                                         .colorScheme
-                                        .onPrimaryContainer
-                                        .withValues(alpha: 0.5),
+                                        .primaryContainer,
+                                    child: Center(
+                                      child: Icon(
+                                        Icons.music_note_rounded,
+                                        size: 64,
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onPrimaryContainer
+                                            .withValues(alpha: 0.5),
+                                      ),
+                                    ),
                                   ),
-                                ),
-                              ),
-                            )
-                          : Center(
-                              child: Icon(
-                                Icons.music_note_rounded,
-                                size: 64,
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onPrimaryContainer
-                                    .withValues(alpha: 0.5),
-                              ),
-                            ),
+                          ),
+                        );
+                      },
                     ),
                   ),
                   // Track Info & Controls
@@ -207,30 +220,48 @@ class LeftSidePanel extends ConsumerWidget {
                                 shape: BoxShape.circle,
                                 color: Theme.of(context).colorScheme.primary,
                               ),
-                              child: IconButton(
-                                icon: Icon(
-                                  playerState.isPlaying
-                                      ? Icons.pause_rounded
-                                      : Icons.play_arrow_rounded,
-                                  color:
-                                      Theme.of(context).colorScheme.onPrimary,
-                                ),
-                                onPressed: () {
-                                  if (playerState.isPlaying) {
-                                    ref
-                                        .read(audioPlayerControllerProvider
-                                            .notifier)
-                                        .pause();
-                                  } else {
-                                    ref
-                                        .read(audioPlayerControllerProvider
-                                            .notifier)
-                                        .play();
-                                  }
-                                },
-                                tooltip:
-                                    playerState.isPlaying ? 'Pause' : 'Play',
-                              ),
+                              child: playerState.isLoading
+                                  ? Padding(
+                                      padding: const EdgeInsets.all(10),
+                                      child: SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onPrimary,
+                                        ),
+                                      ),
+                                    )
+                                  : IconButton(
+                                      icon: Icon(
+                                        playerState.isPlaying
+                                            ? Icons.pause_rounded
+                                            : Icons.play_arrow_rounded,
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onPrimary,
+                                      ),
+                                      onPressed: () {
+                                        if (playerState.isPlaying) {
+                                          ref
+                                              .read(
+                                                  audioPlayerControllerProvider
+                                                      .notifier)
+                                              .pause();
+                                        } else {
+                                          ref
+                                              .read(
+                                                  audioPlayerControllerProvider
+                                                      .notifier)
+                                              .play();
+                                        }
+                                      },
+                                      tooltip: playerState.isPlaying
+                                          ? 'Pause'
+                                          : 'Play',
+                                    ),
                             ),
                             IconButton(
                               icon:
@@ -376,7 +407,7 @@ class LeftSidePanel extends ConsumerWidget {
     final controller = TextEditingController();
     final playlistName = await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (ctx) => AlertDialog(
         title: const Text('New Playlist'),
         content: TextField(
           controller: controller,
@@ -385,15 +416,15 @@ class LeftSidePanel extends ConsumerWidget {
             border: OutlineInputBorder(),
           ),
           autofocus: true,
-          onSubmitted: (value) => Navigator.of(context).pop(value),
+          onSubmitted: (value) => Navigator.of(ctx).pop(value),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(),
+            onPressed: () => Navigator.of(ctx).pop(),
             child: const Text('Cancel'),
           ),
           ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(controller.text),
+            onPressed: () => Navigator.of(ctx).pop(controller.text),
             child: const Text('Create'),
           ),
         ],
@@ -415,8 +446,5 @@ class LeftSidePanel extends ConsumerWidget {
     );
 
     ref.read(savedPlaylistsProvider.notifier).addPlaylist(playlist);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Created playlist "$trimmedName"')),
-    );
   }
 }

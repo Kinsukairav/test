@@ -4,11 +4,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/playlist.dart';
 import '../models/search_result.dart';
 import '../services/youtube_service.dart';
+import 'download_settings_provider.dart';
 
 // Provider for download manager
 final downloadManagerProvider =
     StateNotifierProvider<DownloadManager, DownloadManagerState>(
-  (ref) => DownloadManager(),
+  (ref) {
+    final settings = ref.watch(downloadSettingsProvider);
+    return DownloadManager(downloadPath: settings.downloadPath);
+  },
 );
 
 class DownloadManagerState {
@@ -50,7 +54,10 @@ class DownloadManagerState {
 }
 
 class DownloadManager extends StateNotifier<DownloadManagerState> {
-  DownloadManager() : super(const DownloadManagerState());
+  final String downloadPath;
+
+  DownloadManager({required this.downloadPath})
+      : super(const DownloadManagerState());
 
   final YouTubeService _youtubeService = YouTubeService();
   final Queue<DownloadTask> _downloadQueue = Queue<DownloadTask>();
@@ -84,13 +91,19 @@ class DownloadManager extends StateNotifier<DownloadManagerState> {
     }
 
     final task = _downloadQueue.removeFirst();
+
+    // Increment the active count BEFORE the async gap so the concurrency
+    // guard is correct even when multiple calls are in-flight.
+    state = state.copyWith(activeDownloadCount: state.activeDownloadCount + 1);
+
     await _startDownload(task);
   }
 
   // Start a download
   Future<void> _startDownload(DownloadTask task) async {
     try {
-      // Update task status to downloading
+      // Immediately update the status to 'downloading' while keeping the
+      // original title and artist from the search result.
       _updateDownloadTask(
           task.id,
           task.copyWith(
@@ -98,22 +111,34 @@ class DownloadManager extends StateNotifier<DownloadManagerState> {
             progress: 0.0,
           ));
 
-      // Get download path
-      final downloadPath = await _youtubeService.getDefaultDownloadPath();
+      final effectiveDownloadPath = downloadPath;
 
-      // Start the download
       final completedTask = await _youtubeService.downloadAudio(
         task.id,
-        downloadPath,
+        effectiveDownloadPath,
+        // Pass the real title/artist so downloadAudio never replaces them
+        // with 'Downloading...' / 'Unknown Artist'.
+        originalTitle: task.title,
+        originalArtist: task.artist,
         onProgress: (progress) {
-          _updateDownloadTask(task.id, task.copyWith(progress: progress));
+          // Re-read from state on every progress tick — avoids using the
+          // stale snapshot captured when _startDownload began.
+          final currentTask = state.downloads.firstWhere(
+            (t) => t.id == task.id,
+            orElse: () => task,
+          );
+          _updateDownloadTask(
+              task.id, currentTask.copyWith(progress: progress));
         },
       );
 
-      // Update the task with completion status
+      // Persist the completed task (which now carries the correct title/artist
+      // and the output file path).
       _updateDownloadTask(task.id, completedTask);
 
-      // Process next download in queue
+      // Decrement active count and kick off the next queued item.
+      state = state.copyWith(
+          activeDownloadCount: (state.activeDownloadCount - 1).clamp(0, 99));
       _processDownloadQueue();
     } catch (e) {
       print('Download failed for ${task.title}: $e');
@@ -124,7 +149,8 @@ class DownloadManager extends StateNotifier<DownloadManagerState> {
             progress: 0.0,
           ));
 
-      // Process next download in queue even if this one failed
+      state = state.copyWith(
+          activeDownloadCount: (state.activeDownloadCount - 1).clamp(0, 99));
       _processDownloadQueue();
     }
   }

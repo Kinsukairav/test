@@ -1,27 +1,49 @@
 import 'dart:io';
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/download_manager_provider.dart';
+import '../providers/download_settings_provider.dart';
 import '../models/playlist.dart';
-import '../providers/navigation_provider.dart';
 
 class DownloadManagerScreen extends ConsumerWidget {
   const DownloadManagerScreen({super.key});
 
+  Future<void> _pickFolder(BuildContext context, WidgetRef ref) async {
+    try {
+      final String? selectedDir = await getDirectoryPath(
+        confirmButtonText: 'Select Download Folder',
+      );
+      if (selectedDir != null) {
+        await ref
+            .read(downloadSettingsProvider.notifier)
+            .setDownloadPath(selectedDir);
+      }
+    } catch (e) {
+      print('Could not open folder picker: $e');
+    }
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final downloadState = ref.watch(downloadManagerProvider);
+    final downloadSettings = ref.watch(downloadSettingsProvider);
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Downloads'),
         backgroundColor: Theme.of(context).colorScheme.surface,
         elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => _handleBack(context, ref),
-        ),
+        automaticallyImplyLeading: false,
         actions: [
+          // Folder picker button
+          Tooltip(
+            message: 'Change download folder',
+            child: IconButton(
+              icon: const Icon(Icons.folder_open_rounded),
+              onPressed: () => _pickFolder(context, ref),
+            ),
+          ),
           PopupMenuButton<String>(
             onSelected: (value) {
               final downloadManager =
@@ -38,6 +60,11 @@ class DownloadManagerScreen extends ConsumerWidget {
                   break;
                 case 'resume_all':
                   downloadManager.resumeAll();
+                  break;
+                case 'reset_path':
+                  ref
+                      .read(downloadSettingsProvider.notifier)
+                      .resetToDefault();
                   break;
               }
             },
@@ -59,18 +86,75 @@ class DownloadManagerScreen extends ConsumerWidget {
                 value: 'resume_all',
                 child: Text('Resume All'),
               ),
+              const PopupMenuDivider(),
+              const PopupMenuItem(
+                value: 'reset_path',
+                child: Text('Reset to Default Folder'),
+              ),
             ],
           ),
         ],
       ),
       body: Column(
         children: [
+          // Download path banner
+          _buildPathBanner(context, ref, downloadSettings.downloadPath),
+
           // Download Stats
           _buildDownloadStats(context, downloadState),
 
           // Downloads List
           Expanded(
             child: _buildDownloadsList(context, ref, downloadState),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPathBanner(
+      BuildContext context, WidgetRef ref, String currentPath) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      color: Theme.of(context)
+          .colorScheme
+          .primaryContainer
+          .withValues(alpha: 0.3),
+      child: Row(
+        children: [
+          Icon(Icons.folder_rounded,
+              size: 18,
+              color: Theme.of(context).colorScheme.primary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Download folder',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                Text(
+                  currentPath,
+                  style: const TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.w500),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          TextButton.icon(
+            onPressed: () => _pickFolder(context, ref),
+            icon: const Icon(Icons.edit_rounded, size: 14),
+            label: const Text('Change', style: TextStyle(fontSize: 12)),
+            style: TextButton.styleFrom(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            ),
           ),
         ],
       ),
@@ -224,20 +308,33 @@ class DownloadManagerScreen extends ConsumerWidget {
                 .read(downloadManagerProvider.notifier)
                 .removeDownload(download.id);
           },
+          onReveal: download.filePath != null
+              ? () => _revealInExplorer(download.filePath!)
+              : null,
         );
       },
     );
   }
 
-  void _handleBack(BuildContext context, WidgetRef ref) {
-    final navigator = Navigator.of(context);
-    if (navigator.canPop()) {
-      navigator.pop();
-      return;
+  Future<void> _revealInExplorer(String filePath) async {
+    try {
+      if (Platform.isWindows) {
+        // /select,<path> (no space) highlights the file in Explorer
+        await Process.run(
+            'explorer.exe', ['/select,$filePath'],
+            runInShell: false);
+      } else if (Platform.isMacOS) {
+        await Process.run('open', ['-R', filePath]);
+      } else {
+        // Linux: open parent directory
+        final dir = filePath.substring(0, filePath.lastIndexOf('/'));
+        await Process.run('xdg-open', [dir]);
+      }
+    } catch (e) {
+      print('Failed to reveal in explorer: $e');
     }
-
-    ref.read(activeScreenProvider.notifier).state = 0;
   }
+
 }
 
 class DownloadTaskTile extends StatelessWidget {
@@ -245,6 +342,9 @@ class DownloadTaskTile extends StatelessWidget {
   final VoidCallback onRetry;
   final VoidCallback onCancel;
   final VoidCallback onRemove;
+  /// Called when the user taps the "Show in folder" button.
+  /// Null when no file path is available.
+  final VoidCallback? onReveal;
 
   const DownloadTaskTile({
     super.key,
@@ -252,6 +352,7 @@ class DownloadTaskTile extends StatelessWidget {
     required this.onRetry,
     required this.onCancel,
     required this.onRemove,
+    this.onReveal,
   });
 
   @override
@@ -294,6 +395,20 @@ class DownloadTaskTile extends StatelessWidget {
                     ],
                   ),
                 ),
+                // Show-in-folder button (only when completed and path known)
+                if (task.status == DownloadStatus.completed && onReveal != null)
+                  Tooltip(
+                    message: 'Show in folder',
+                    child: IconButton(
+                      icon: const Icon(Icons.folder_open_rounded),
+                      onPressed: onReveal,
+                      iconSize: 20,
+                      color: Theme.of(context).colorScheme.primary,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
+                  ),
+                const SizedBox(width: 6),
                 _buildStatusIcon(context),
                 const SizedBox(width: 8),
                 _buildActionButton(context),

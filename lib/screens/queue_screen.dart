@@ -261,13 +261,16 @@ class QueueScreen extends ConsumerWidget {
     final track = updatedQueue.removeAt(oldIndex);
     updatedQueue.insert(newIndex, track);
 
-    // Update current track index if necessary
+    // Update current track index to follow the track that was moved.
     int updatedCurrentIndex = currentIndex;
     if (oldIndex == currentIndex) {
+      // The currently-playing track itself was moved.
       updatedCurrentIndex = newIndex;
     } else if (oldIndex < currentIndex && newIndex >= currentIndex) {
+      // A track from before the current one was moved to after it — shift back.
       updatedCurrentIndex = currentIndex - 1;
     } else if (oldIndex > currentIndex && newIndex <= currentIndex) {
+      // A track from after the current one was moved to before it — shift forward.
       updatedCurrentIndex = currentIndex + 1;
     }
 
@@ -288,15 +291,6 @@ class QueueScreen extends ConsumerWidget {
         break;
       case 'remove':
         _removeFromQueue(ref, index);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Removed "${track.title}" from queue'),
-            action: SnackBarAction(
-              label: 'Undo',
-              onPressed: () => _addTrackBackToQueue(ref, track, index),
-            ),
-          ),
-        );
         break;
     }
   }
@@ -308,34 +302,28 @@ class QueueScreen extends ConsumerWidget {
     final updatedQueue = List<Track>.from(queue);
     updatedQueue.removeAt(index);
 
-    // Update current track index if necessary
-    int updatedCurrentIndex = currentIndex;
-    if (index < currentIndex) {
+    // Determine new current-track index.
+    int updatedCurrentIndex;
+    if (updatedQueue.isEmpty) {
+      // Queue is now empty — no valid current track.
+      updatedCurrentIndex = -1;
+    } else if (index < currentIndex) {
+      // A track before the current one was removed — shift back.
       updatedCurrentIndex = currentIndex - 1;
     } else if (index == currentIndex) {
-      // If we're removing the currently playing track, don't change the index
-      // The audio controller should handle this case
-      updatedCurrentIndex = currentIndex >= updatedQueue.length
-          ? updatedQueue.length - 1
-          : currentIndex;
+      // The currently-playing track was removed. Keep the same index but
+      // clamp it to the new queue length so it stays valid.
+      updatedCurrentIndex = currentIndex.clamp(0, updatedQueue.length - 1);
+    } else {
+      // A track after the current one was removed — index unchanged.
+      updatedCurrentIndex = currentIndex;
     }
 
     ref.read(queueProvider.notifier).state = updatedQueue;
     ref.read(currentTrackIndexProvider.notifier).state = updatedCurrentIndex;
   }
 
-  void _addTrackBackToQueue(WidgetRef ref, Track track, int index) {
-    final queue = ref.read(queueProvider);
-    final updatedQueue = List<Track>.from(queue);
 
-    if (index >= updatedQueue.length) {
-      updatedQueue.add(track);
-    } else {
-      updatedQueue.insert(index, track);
-    }
-
-    ref.read(queueProvider.notifier).state = updatedQueue;
-  }
 
   void _showClearQueueDialog(BuildContext context, WidgetRef ref) {
     showDialog(
@@ -352,9 +340,6 @@ class QueueScreen extends ConsumerWidget {
             onPressed: () {
               ref.read(audioPlayerControllerProvider.notifier).clearQueue();
               Navigator.of(context).pop();
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Queue cleared')),
-              );
             },
             child: const Text('Clear'),
           ),

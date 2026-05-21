@@ -70,10 +70,23 @@ class RightSidePanel extends ConsumerWidget {
               },
             ),
           ),
-          Icon(
-            Icons.volume_up,
-            size: 20,
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          Consumer(
+            builder: (context, ref, _) {
+              final volume = ref.watch(volumeProvider);
+              IconData volumeIcon;
+              if (volume == 0) {
+                volumeIcon = Icons.volume_off;
+              } else if (volume < 0.5) {
+                volumeIcon = Icons.volume_down;
+              } else {
+                volumeIcon = Icons.volume_up;
+              }
+              return Icon(
+                volumeIcon,
+                size: 20,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              );
+            },
           ),
           const SizedBox(height: 20),
         ],
